@@ -1,0 +1,64 @@
+# XA Transaction POC — Base Configuration
+# Profiles: fault (fault injection), benchmark (perf testing), test (Testcontainers)
+
+spring:
+  datasource:
+    # URL includes XA-required parameters for MySQL Connector/J
+    url: jdbc:mysql://localhost:3306/xapoc?allowXAStatements=true&pinGlobalTxToPhysicalConnection=true&useSSL=false&allowPublicKeyRetrieval=true
+    username: xapoc
+    password: xapoc
+
+  jpa:
+    hibernate:
+      # create-drop is appropriate for a POC; use validate/none in production
+      ddl-auto: create-drop
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+
+  artemis:
+    mode: native
+    broker-url: tcp://localhost:61616
+    user: admin
+    password: admin
+
+  jta:
+    enabled: true
+    atomikos:
+      datasource:
+        unique-resource-name: mysqlXaDs
+        max-pool-size: 10
+        min-pool-size: 2
+        borrow-connection-timeout: 30
+        test-query: "SELECT 1"
+      connectionfactory:
+        unique-resource-name: artemisXaCf
+        max-pool-size: 10
+        min-pool-size: 2
+        local-transaction-mode: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, metrics, prometheus
+  metrics:
+    distribution:
+      percentiles:
+        xa.transaction.duration: 0.5, 0.95, 0.99
+
+logging:
+  level:
+    com.atomikos: INFO
+    com.example.xapoc: INFO
+    org.springframework.transaction: INFO
+
+# Application-specific properties
+xa-poc:
+  fault-injection:
+    # Set to true via application-fault.yml profile to trigger XA rollback scenarios
+    enabled: false
+  benchmark:
+    # Number of events per benchmark run; overridden to 100 in application-test.yml
+    event-count: 1000

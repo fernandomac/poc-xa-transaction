@@ -1,0 +1,18 @@
+# Test profile — used by all integration tests via @ActiveProfiles("test")
+# Datasource and Artemis URLs are overridden by @DynamicPropertySource in AbstractIntegrationTest
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+xa-poc:
+  fault-injection:
+    enabled: false
+  benchmark:
+    # Reduced count for tests to keep integration tests fast
+    event-count: 100
+
+logging:
+  level:
+    com.atomikos: WARN
+    com.example.xapoc: DEBUG

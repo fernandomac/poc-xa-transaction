@@ -1,0 +1,23 @@
+# Benchmark profile — enables Micrometer percentile histograms for accurate latency distribution.
+# event-count is intentionally NOT set here; application.yml provides the production default (1000)
+# and application-test.yml overrides it to 100 for faster CI runs.
+
+management:
+  metrics:
+    distribution:
+      percentiles:
+        xa.transaction.duration: 0.5, 0.95, 0.99
+      percentiles-histogram:
+        xa.transaction.duration: true
+      minimum-expected-value:
+        xa.transaction.duration: 1ms
+      maximum-expected-value:
+        xa.transaction.duration: 10s
+  endpoints:
+    web:
+      exposure:
+        include: prometheus, metrics, health
+
+logging:
+  level:
+    com.example.xapoc: DEBUG

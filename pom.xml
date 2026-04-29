@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.5.0</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.example</groupId>
+    <artifactId>xa-transaction-poc</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>xa-transaction-poc</name>
+    <description>POC for XA distributed transactions — Spring Boot 3.5 + MySQL + Apache Artemis</description>
+
+    <properties>
+        <java.version>25</java.version>
+        <!-- Atomikos is NOT managed by Spring Boot BOM — pin explicitly -->
+        <atomikos.version>6.0.0</atomikos.version>
+    </properties>
+
+    <dependencies>
+        <!-- Spring Boot starters -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <!-- spring-boot-starter-artemis replaces spring-boot-starter-jms in Spring Boot 3.5 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-artemis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- Atomikos JTA — Spring Boot 3 compatible starter (provides XADataSourceWrapper + XAConnectionFactoryWrapper) -->
+        <dependency>
+            <groupId>com.atomikos</groupId>
+            <artifactId>transactions-spring-boot3-starter</artifactId>
+            <version>${atomikos.version}</version>
+        </dependency>
+
+        <!-- MySQL XA-capable driver (version managed by Spring Boot BOM) -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+        </dependency>
+
+        <!-- Apache Artemis — Jakarta EE namespace REQUIRED for Spring Boot 3; do NOT use artemis-jms-client -->
+        <dependency>
+            <groupId>org.apache.activemq</groupId>
+            <artifactId>artemis-jakarta-client</artifactId>
+        </dependency>
+
+        <!-- Jackson — pulled transitively as runtime by spring-boot-starter-artemis; explicit compile scope needed -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <!-- Micrometer Prometheus for optional scraping and percentile histograms -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
+        <!-- Test dependencies -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>mysql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!--
+                      Default execution is skipped; the two explicit executions below
+                      control test ordering.  Integration tests MUST run before the
+                      benchmark so that PerformanceBenchmarkIT's 100-transaction heavy
+                      load does not leave Artemis in a state that prevents HappyPathIT
+                      from establishing new XA connections.
+                    -->
+                    <skipTests>true</skipTests>
+                </configuration>
+                <executions>
+                    <!-- Phase 1: lightweight integration tests (happy-path + fault injection) -->
+                    <execution>
+                        <id>integration-tests</id>
+                        <phase>test</phase>
+                        <goals><goal>test</goal></goals>
+                        <configuration>
+                            <skipTests>false</skipTests>
+                            <argLine>--add-opens java.base/java.lang=ALL-UNNAMED
+                                     --add-opens java.base/java.util=ALL-UNNAMED</argLine>
+                            <includes>
+                                <include>**/integration/**IT.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                    <!-- Phase 2: benchmark (heavy XA load — runs last to avoid contaminating integration tests) -->
+                    <execution>
+                        <id>benchmark-tests</id>
+                        <phase>test</phase>
+                        <goals><goal>test</goal></goals>
+                        <configuration>
+                            <skipTests>false</skipTests>
+                            <argLine>--add-opens java.base/java.lang=ALL-UNNAMED
+                                     --add-opens java.base/java.util=ALL-UNNAMED</argLine>
+                            <includes>
+                                <include>**/benchmark/**IT.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

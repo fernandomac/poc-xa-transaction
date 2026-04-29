@@ -1,0 +1,10 @@
+# Fault-injection profile — activates XA rollback scenario testing
+xa-poc:
+  fault-injection:
+    enabled: true
+
+logging:
+  level:
+    # DEBUG-level Atomikos output shows two-phase commit / rollback lifecycle
+    com.atomikos: DEBUG
+    com.example.xapoc: DEBUG
