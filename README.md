@@ -51,3 +51,17 @@ JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home mvn tes
 - **MySQL 8** — XA-capable datasource (`MysqlXADataSource`)
 - **Apache Artemis** — XA-capable JMS broker (`ActiveMQXAConnectionFactory`)
 - **Testcontainers** — spins up MySQL and Artemis for every test run
+
+## Repomix
+
+```aiignore
+repomix --output "repomix.xml" \
+  --style xml --compress --remove-comments --no-file-summary --output-show-line-numbers --token-count-tree \
+  --style xml \
+  --compress \
+  --remove-comments \
+  --no-file-summary \
+  --output-show-line-numbers \
+  --include "service/**/src/main/**,service/**/pom.xml,pom.xml,specs/**,docs/**,*.yml,*.yaml,*.md,CLAUDE.md" \
+  --ignore "**/target/**,**/*.class,**/*.jar,**/test-output/**,**/functional-test/**,**/*.log,**/src/test/**,build_scripts/**,doc/**,docs/**,keyspipeline/**,scripts/**,.idea/**,.cursor/**,.claude/**,**/archunit_store/**,**/docker/**,keys/**,hs_err_pid*.log,.specify/**,repomix/**,.gitlab-ci.yml,pipeline/**,**/wiremock/**,**/fixtures/**"
+```

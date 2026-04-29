@@ -1,0 +1,1422 @@
+<directory_structure>
+specs/
+  001-xa-transaction-poc/
+    checklists/
+      requirements.md
+    contracts/
+      benchmark-result-contract.md
+      jms-message-contract.md
+    data-model.md
+    plan.md
+    quickstart.md
+    research.md
+    spec.md
+    tasks.md
+CLAUDE.md
+docker-compose.yml
+pom.xml
+README.md
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="specs/001-xa-transaction-poc/checklists/requirements.md">
+# Specification Quality Checklist: XA Transaction POC
+
+**Purpose**: Validate specification completeness and quality before proceeding to planning
+**Created**: 2026-04-28
+**Feature**: [spec.md](../spec.md)
+
+## Content Quality
+
+- [x] No implementation details (languages, frameworks, APIs)
+- [x] Focused on user value and business needs
+- [x] Written for non-technical stakeholders
+- [x] All mandatory sections completed
+
+## Requirement Completeness
+
+- [x] No [NEEDS CLARIFICATION] markers remain
+- [x] Requirements are testable and unambiguous
+- [x] Success criteria are measurable
+- [x] Success criteria are technology-agnostic (no implementation details)
+- [x] All acceptance scenarios are defined
+- [x] Edge cases are identified
+- [x] Scope is clearly bounded
+- [x] Dependencies and assumptions identified
+
+## Feature Readiness
+
+- [x] All functional requirements have clear acceptance criteria
+- [x] User scenarios cover primary flows
+- [x] Feature meets measurable outcomes defined in Success Criteria
+- [x] No implementation details leak into specification
+
+## Notes
+
+All items pass. Spec is ready for `/speckit-plan`.
+</file>
+
+<file path="specs/001-xa-transaction-poc/contracts/benchmark-result-contract.md">
+# Contract: BenchmarkResult JSON Output
+
+**File**: `benchmark-result.json` (written to working directory)
+**Producer**: `BenchmarkRunner.run()`
+**Consumer**: CI scripts, manual comparison, `PerformanceBenchmarkIT` assertions
+
+## File Format
+
+UTF-8 JSON, single object, no trailing newline required.
+
+```json
+{
+  "runId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "eventCount": 1000,
+  "durationMs": 1842,
+  "throughputPerSec": 542.8,
+  "p50Ms": 1.2,
+  "p95Ms": 3.7,
+  "p99Ms": 8.1
+}
+```
+
+## Field Contracts
+
+| Field | Type | Required | Constraint |
+|---|---|---|---|
+| `runId` | string (UUID) | Yes | Unique per run; generated at benchmark start |
+| `eventCount` | integer | Yes | Must equal `xa-poc.benchmark.event-count` config value |
+| `durationMs` | integer | Yes | Wall-clock milliseconds for full benchmark loop; > 0 |
+| `throughputPerSec` | number | Yes | `eventCount / (durationMs / 1000.0)`; MUST be ≥ 500 to pass SC-003 |
+| `p50Ms` | number | Yes | Micrometer 50th percentile commit latency in milliseconds; > 0 |
+| `p95Ms` | number | Yes | Micrometer 95th percentile commit latency; MUST be ≤ 200 to pass SC-004 |
+| `p99Ms` | number | Yes | Micrometer 99th percentile commit latency; > 0 |
+
+## Latency Scope
+
+All percentile values measure the duration of `EventProducerService.produceEvent()` from
+entry to return — encompassing both the MySQL XA write and the Artemis XA send, plus the
+two-phase commit overhead. Rolled-back transactions (fault injection) MUST NOT be included
+in the latency histogram.
+
+## Compliance Check (by `PerformanceBenchmarkIT`)
+
+```java
+assertThat(result.throughputPerSec()).isGreaterThanOrEqualTo(500.0);
+assertThat(result.p95Ms()).isLessThanOrEqualTo(200.0);
+```
+</file>
+
+<file path="specs/001-xa-transaction-poc/contracts/jms-message-contract.md">
+# Contract: JMS EventMessage
+
+**Transport**: Apache Artemis queue `sample.events`
+**Producer**: `EventProducerService.produceEvent(String payload)`
+**Consumer**: `EventConsumerService` via `@JmsListener(destination="sample.events")`
+
+## Message Format
+
+**JMS message type**: `TextMessage`
+**Body encoding**: UTF-8 JSON
+
+```json
+{
+  "eventId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "payload": "arbitrary string content"
+}
+```
+
+## Field Contracts
+
+| Field | Type | Required | Invariant |
+|---|---|---|---|
+| `eventId` | UUID string | Yes | MUST equal the `id` of the `SampleEvent` saved in the same XA transaction |
+| `payload` | String | Yes | MUST equal the `payload` field of the corresponding `SampleEvent` |
+
+## Transactional Guarantee
+
+The message is sent inside an XA transaction. It MUST NOT be delivered to the consumer
+unless the XA transaction commits. If the transaction rolls back, no message appears on the
+queue or in any dead-letter queue.
+
+## Consumer Acknowledgement
+
+The consumer listener container MUST be configured with `SESSION_TRANSACTED` acknowledge mode
+so that message receipt participates in the JTA transaction context (if applicable) or at
+minimum is acknowledged only after successful processing.
+
+## Failure Behaviour
+
+- Producer fault before DB commit → XA rollback → consumer receives nothing
+- Consumer listener exception → message redelivered (standard JMS redelivery); consumer
+  should be idempotent but for this POC redelivery handling is out of scope
+</file>
+
+<file path="specs/001-xa-transaction-poc/data-model.md">
+# Data Model: XA Transaction POC
+
+**Branch**: `001-xa-transaction-poc` | **Date**: 2026-04-28
+
+---
+
+## Entity: SampleEvent
+
+**Storage**: MySQL table `sample_event`
+**Purpose**: Persistent record of every event produced within an XA transaction.
+
+### Fields
+
+| Field | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | UUID | PRIMARY KEY, NOT NULL | Auto-generated (`@GeneratedValue`) |
+| `payload` | VARCHAR(500) | NOT NULL | Arbitrary string payload from producer caller |
+| `created_at` | DATETIME(6) | NOT NULL | Set in `@PrePersist`; microsecond precision |
+
+### JPA Mapping
+
+```java
+@Entity
+@Table(name = "sample_event")
+public class SampleEvent {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+
+    @Column(nullable = false, length = 500)
+    private String payload;
+
+    @Column(name = "created_at", nullable = false)
+    private Instant createdAt;
+
+    @PrePersist
+    void prePersist() { this.createdAt = Instant.now(); }
+}
+```
+
+### Validation Rules
+
+- `payload` MUST NOT be null or empty at the service layer before `save()` is called.
+- `id` MUST be assigned by the JPA provider — never set by caller.
+
+### State Transitions
+
+`SampleEvent` has no explicit status field. Its presence in the table implies a committed
+XA transaction. Its absence (after a fault injection rollback) implies the XA transaction
+was rolled back. The test assertions rely on `repository.count()` directly.
+
+---
+
+## Message Contract: EventMessage (JMS TextMessage)
+
+**Transport**: Apache Artemis queue `sample.events`
+**Format**: JMS `TextMessage` with a JSON body
+**Purpose**: Carries the event from producer to consumer within the same XA transaction.
+
+### JSON Body Schema
+
+```json
+{
+  "eventId": "<UUID string>",
+  "payload": "<String>"
+}
+```
+
+### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `eventId` | String (UUID) | Yes | Must match the `SampleEvent.id` persisted in the same transaction |
+| `payload` | String | Yes | Must match the `SampleEvent.payload` persisted in the same transaction |
+
+### Invariant
+
+`eventId` in the JMS message MUST equal the `id` of the `SampleEvent` saved to MySQL in the
+same XA transaction. Consumer tests verify this by asserting the payload matches.
+
+---
+
+## Value Object: BenchmarkResult
+
+**Storage**: JSON file `benchmark-result.json` in the working directory
+**Purpose**: Structured output from a benchmark run; machine-readable for comparison across
+runs.
+
+### Schema
+
+```json
+{
+  "runId": "<UUID string>",
+  "eventCount": 1000,
+  "durationMs": 1842,
+  "throughputPerSec": 542.8,
+  "p50Ms": 1.2,
+  "p95Ms": 3.7,
+  "p99Ms": 8.1
+}
+```
+
+### Fields
+
+| Field | Type | Unit | Notes |
+|---|---|---|---|
+| `runId` | String (UUID) | — | Generated at benchmark start; unique per run |
+| `eventCount` | int | messages | Configured via `xa-poc.benchmark.event-count` |
+| `durationMs` | long | ms | Wall-clock duration of the full benchmark loop |
+| `throughputPerSec` | double | msgs/sec | `eventCount / (durationMs / 1000.0)` |
+| `p50Ms` | double | ms | 50th percentile commit latency from Micrometer Timer |
+| `p95Ms` | double | ms | 95th percentile commit latency from Micrometer Timer |
+| `p99Ms` | double | ms | 99th percentile commit latency from Micrometer Timer |
+
+### Latency Definition
+
+All latency values measure the wall-clock time from `EventProducerService.produceEvent()`
+entry to its return (i.e., XA two-phase commit included). End-to-end consumer receipt latency
+is tracked separately in `US3` acceptance tests using `Awaitility` timing.
+
+---
+
+## Relationships
+
+```
+EventProducerService
+  │
+  ├──[XA TX]──> SampleEvent (persisted to MySQL)
+  └──[XA TX]──> EventMessage (sent to Artemis queue "sample.events")
+                    │
+                    └──> EventConsumerService (receives and logs)
+
+BenchmarkRunner
+  └──> EventProducerService (N times)
+  └──> BenchmarkResult (written to benchmark-result.json)
+```
+</file>
+
+<file path="specs/001-xa-transaction-poc/plan.md">
+# Implementation Plan: XA Transaction POC — Reliable Message Production & Consumption
+
+**Branch**: `001-xa-transaction-poc` | **Date**: 2026-04-28 | **Spec**: [spec.md](spec.md)
+**Input**: Feature specification from `specs/001-xa-transaction-poc/spec.md`
+
+## Summary
+
+Validate that a Spring Boot 3.5 / Java 25 application can produce events atomically to MySQL
+and Apache Artemis within a single XA/JTA distributed transaction. Key correctness invariant:
+when the producer transaction rolls back (fault injected after JMS send, before DB commit),
+the consumer MUST receive no message. Secondary goal: measure committed-transaction throughput
+(≥500 msgs/sec) and p95 latency (≤200ms) under sustained load.
+
+## Technical Context
+
+**Language/Version**: Java 25
+**Primary Dependencies**:
+- Spring Boot 3.5 (parent BOM)
+- Atomikos `transactions-spring-boot3-starter:6.0.0` (JTA coordinator + XA wrappers)
+- `com.mysql:mysql-connector-j` (BOM managed; XA-capable)
+- `org.apache.activemq:artemis-jakarta-client` (BOM managed; Jakarta namespace — NOT `artemis-jms-client`)
+- Spring Data JPA + Spring JMS (via Spring Boot starters)
+- Micrometer + `micrometer-registry-prometheus` (BOM managed)
+- Testcontainers: `spring-boot-testcontainers`, `org.testcontainers:mysql`, `org.testcontainers:artemis`
+- Awaitility (for consumer assertion timeouts in tests)
+- Jackson (BOM managed; for benchmark JSON output)
+
+**Storage**: MySQL 8 (XA-enabled; `innodb_support_xa=ON` by default in MySQL 8)
+**Testing**: JUnit 5 + Spring Boot Test + Testcontainers + Awaitility (integration tests only — no TDD)
+**Target Platform**: Local developer machine; Docker Compose for MySQL + Artemis
+**Project Type**: Standalone Spring Boot application (POC/demo)
+**Performance Goals**: ≥500 committed msgs/sec throughput; ≤200ms p95 commit latency (XA two-phase commit inclusive)
+**Constraints**:
+- Single machine, no clustering
+- XA semantics required — Atomikos manages both MySQL and Artemis within one JTA transaction
+- Results exported as `benchmark-result.json` (Jackson serialization)
+**Scale/Scope**: POC — single producer service, single consumer listener, string payloads ≤500 chars
+
+## Constitution Check
+
+*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+
+| Principle | Pre-Design | Post-Design | Notes |
+|---|---|---|---|
+| I. XA Transaction Integrity | ✅ PASS | ✅ PASS | Atomikos enlists both `MysqlXADataSource` and `ActiveMQXAConnectionFactory` in one JTA TX |
+| II. Failure-Scenario Coverage | ✅ PASS | ✅ PASS | `FaultInjectionIT` covers the canonical rollback scenario with 0-message assertion |
+| III. Performance Observability | ✅ PASS | ✅ PASS | Micrometer Timer p50/p95/p99 + throughput exported to `benchmark-result.json` |
+| IV. Technology Stack | ✅ PASS | ✅ PASS | Java 25, Spring Boot 3.5, MySQL 8, Artemis — all per constitution; Atomikos as JTA |
+| V. POC Scope Discipline | ✅ PASS | ✅ PASS | No auth, no HA, no UI; simple string payloads; single module Maven project |
+
+No violations.
+
+## Project Structure
+
+### Documentation (this feature)
+
+```text
+specs/001-xa-transaction-poc/
+├── plan.md              # This file
+├── spec.md              # Feature specification
+├── research.md          # Phase 0 decisions and findings
+├── data-model.md        # Entity definitions and message schema
+├── quickstart.md        # Step-by-step run guide
+├── contracts/
+│   ├── jms-message-contract.md
+│   └── benchmark-result-contract.md
+└── tasks.md             # Implementation tasks (/speckit-tasks output)
+```
+
+### Source Code (repository root)
+
+```text
+pom.xml                                      # Spring Boot 3.5 parent, Java 25, Maven Wrapper
+mvnw / .mvn/wrapper/
+docker-compose.yml                           # MySQL 8 + Apache Artemis 2.x
+benchmark-result.json                        # Generated by benchmark run (gitignored)
+atomikos-logs/                               # Atomikos TX logs (gitignored)
+
+src/main/java/com/example/xapoc/
+├── XaTransactionPocApplication.java         # @SpringBootApplication entry point
+├── config/
+│   ├── DataSourceConfig.java               # MysqlXADataSource bean (Atomikos wrapper picks it up)
+│   └── JmsConfig.java                      # ActiveMQXAConnectionFactory bean + JmsTemplate config
+├── domain/
+│   └── SampleEvent.java                    # JPA entity (id, payload, createdAt)
+├── repository/
+│   └── SampleEventRepository.java          # JpaRepository<SampleEvent, UUID>
+├── producer/
+│   └── EventProducerService.java           # @Transactional XA producer; fault injection flag
+├── consumer/
+│   └── EventConsumerService.java           # @JmsListener; collects messages for test assertions
+└── benchmark/
+    ├── BenchmarkRunner.java                # Sends N events, records Micrometer Timer, writes JSON
+    └── BenchmarkResult.java               # Record: runId, eventCount, durationMs, throughput, p50/95/99
+
+src/main/resources/
+├── application.yml                         # Base config (Atomikos, datasource, artemis, JPA)
+├── application-fault.yml                   # xa-poc.fault-injection.enabled=true
+└── application-benchmark.yml              # event-count + Micrometer histogram config
+
+src/test/java/com/example/xapoc/
+├── AbstractIntegrationTest.java            # @SpringBootTest base; MySQLContainer + ArtemisContainer + @DynamicPropertySource
+├── integration/
+│   ├── HappyPathIT.java                   # US1: assert 1 DB record + 1 consumer message
+│   └── FaultInjectionIT.java             # US2: @ActiveProfiles("fault"); assert 0 records + 0 messages in 5s
+└── benchmark/
+    └── PerformanceBenchmarkIT.java        # US3: @ActiveProfiles("benchmark"); assert benchmark-result.json metrics
+
+src/test/resources/
+└── application-test.yml                   # Testcontainers Atomikos log dir override
+```
+
+**Structure Decision**: Single Maven module (no sub-modules). POC scope discipline — no
+reasons to split. Production classes and integration tests in standard Maven layout.
+
+## Key Implementation Notes
+
+### Atomikos Auto-Configuration
+
+The `transactions-spring-boot3-starter` auto-registers `XADataSourceWrapper` and
+`XAConnectionFactoryWrapper`. Declare `MysqlXADataSource` and `ActiveMQXAConnectionFactory`
+as `@Bean`s — the starter's wrappers pick them up and expose pooled, JTA-enrolled
+`DataSource` and `ConnectionFactory` beans that Spring Boot's JDBC/JMS auto-configuration
+uses transparently.
+
+No manual `UserTransactionManager`, `UserTransaction`, or `JtaTransactionManager` bean
+declarations are needed — the Atomikos starter handles all of that.
+
+### XA-Critical MySQL Flags
+
+The JDBC URL passed to `MysqlXADataSource` MUST include:
+- `allowXAStatements=true` — enables the driver to issue XA commands
+- `pinGlobalTxToPhysicalConnection=true` — prevents XA session confusion under connection reuse
+
+### Testcontainers + XA Datasource
+
+`@ServiceConnection` does not work for XA datasources since the XA beans are manually
+configured. Use `@DynamicPropertySource` on the abstract base test class to inject container
+URLs into `spring.datasource.url` and `spring.artemis.broker-url`.
+
+The Atomikos log directory MUST be set to a `@TempDir` per-test-JVM via `@DynamicPropertySource`
+to prevent log corruption across test runs.
+
+### Fault Injection Placement
+
+The fault is thrown AFTER `jmsTemplate.send(...)` and BEFORE the `@Transactional` method
+returns. This positions the exception inside the XA transaction boundary, triggering Atomikos
+to issue `XA ROLLBACK` to both MySQL and Artemis. The consumer should receive nothing.
+
+### Consumer Test Isolation
+
+`EventConsumerService.getReceivedMessages()` returns a `CopyOnWriteArrayList`. Each integration
+test MUST call `eventConsumerService.clearMessages()` in `@BeforeEach` to prevent message
+bleed-through from previous tests (especially if `AbstractIntegrationTest` reuses the Spring
+context).
+
+## Complexity Tracking
+
+> No constitution violations — complexity tracking not required.
+</file>
+
+<file path="specs/001-xa-transaction-poc/quickstart.md">
+# Quickstart: XA Transaction POC
+
+**Branch**: `001-xa-transaction-poc`
+
+## Prerequisites
+
+- Java 25 (`java -version` should show 25.x)
+- Docker and Docker Compose
+- Maven Wrapper (`./mvnw`) — included in the project
+
+## 1. Start Infrastructure
+
+```bash
+docker-compose up -d
+```
+
+Expected: MySQL 8 on port 3306 and Apache Artemis on port 61616 (web console on 8161).
+
+Verify:
+```bash
+docker-compose ps
+# Both containers should show "Up"
+```
+
+## 2. Build the Project
+
+```bash
+./mvnw clean compile -DskipTests
+```
+
+## 3. Run the Happy-Path Test (User Story 1)
+
+Proves that a committed XA transaction delivers the event to both MySQL and Artemis.
+
+```bash
+./mvnw test -Dtest=HappyPathIT
+```
+
+**Expected output** (abbreviated):
+```
+INFO  EventProducerService - Producing event with payload: hello-world
+INFO  EventConsumerService - Received message: {"eventId":"...","payload":"hello-world"}
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+```
+
+## 4. Run the Fault-Injection Test (User Story 2)
+
+Proves that an XA rollback (exception after JMS send, before DB commit) leaves the consumer
+with no messages and the database empty.
+
+```bash
+./mvnw test -Dtest=FaultInjectionIT
+```
+
+**Expected output** (abbreviated):
+```
+INFO  EventProducerService - Fault injection active — throwing before DB commit
+ERROR EventProducerService - XA transaction rolled back: Simulated fault
+INFO  FaultInjectionIT - Consumer received 0 messages — XA rollback confirmed ✓
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+```
+
+## 5. Run the Performance Benchmark (User Story 3)
+
+Measures throughput and latency of committed XA transactions under load.
+
+```bash
+./mvnw test -Dtest=PerformanceBenchmarkIT
+```
+
+**Expected output** (abbreviated):
+```
+INFO  BenchmarkRunner - Benchmark complete: 1000 events in 1842ms
+INFO  BenchmarkRunner - Throughput: 542.8 msgs/sec | p50: 1.2ms | p95: 3.7ms | p99: 8.1ms
+INFO  BenchmarkRunner - Results written to benchmark-result.json
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+```
+
+Read the result file:
+```bash
+cat benchmark-result.json | python3 -m json.tool
+```
+
+## 6. Run All Tests
+
+```bash
+./mvnw test
+```
+
+## 7. Stop Infrastructure
+
+```bash
+docker-compose down
+```
+
+## Profiles Reference
+
+| Profile | Activation | Purpose |
+|---|---|---|
+| `test` | `@ActiveProfiles("test")` in tests | Testcontainers overrides |
+| `fault` | `@ActiveProfiles("fault")` | Enables `xa-poc.fault-injection.enabled=true` |
+| `benchmark` | `@ActiveProfiles("benchmark")` | Sets event count + Micrometer histogram config |
+
+## Troubleshooting
+
+**`Connection refused` to MySQL or Artemis**: Run `docker-compose up -d` and wait 15 seconds
+for containers to fully start before running tests.
+
+**Atomikos log corruption**: Delete `./atomikos-logs/` and retry. This directory is not shared
+across test runs when properly configured, but manual cleanup resolves stale log state.
+
+**`InaccessibleObjectException`**: Add to `maven-surefire-plugin` configuration:
+```xml
+<argLine>--add-opens java.base/java.lang=ALL-UNNAMED</argLine>
+```
+
+**Artemis jar conflict (`javax` vs `jakarta`)**: Ensure `artemis-jakarta-client` is on the
+classpath, NOT `artemis-jms-client`. Check `./mvnw dependency:tree | grep artemis`.
+</file>
+
+<file path="specs/001-xa-transaction-poc/research.md">
+# Research: XA Transaction POC — Spring Boot 3.5 + Java 25
+
+**Branch**: `001-xa-transaction-poc` | **Date**: 2026-04-28
+**Status**: Complete — all NEEDS CLARIFICATION resolved
+
+---
+
+## Decision 1: JTA Transaction Manager
+
+**Decision**: Atomikos via `com.atomikos:transactions-spring-boot3-starter:6.0.0`
+
+**Rationale**: Spring Boot 3.x removed the built-in vendor JTA starters
+(`spring-boot-starter-jta-atomikos`, `spring-boot-starter-jta-narayana`). Atomikos now ships
+its own Spring Boot 3-compatible starter (`transactions-spring-boot3-starter`) that restores
+equivalent auto-configuration. It automatically registers `XADataSourceWrapper` and
+`XAConnectionFactoryWrapper` beans that Spring Boot's existing JDBC/JMS auto-configuration
+picks up. This is the vendor-maintained path with the best documentation for MySQL + JMS XA
+scenarios.
+
+**Alternatives considered**:
+- Narayana (`me.snowdrop:narayana-spring-boot-starter`) — also supports Spring Boot 3 but is
+  community-maintained; fewer real-world examples for the MySQL + Artemis combination.
+- Manual JTA configuration without any starter — feasible but adds significant boilerplate
+  (`UserTransactionManager`, `UserTransaction`, `JtaTransactionManager` beans all by hand).
+
+**Maven coordinate** (not managed by Spring Boot BOM — pin explicitly):
+```xml
+<dependency>
+    <groupId>com.atomikos</groupId>
+    <artifactId>transactions-spring-boot3-starter</artifactId>
+    <version>6.0.0</version>
+</dependency>
+```
+
+**Java 25 note**: Atomikos 6.x is compiled for Java 11+ and runs fine on Java 25. No known
+breaking changes from the module system. If `InaccessibleObjectException` appears, add
+`--add-opens` to `maven-surefire-plugin`.
+
+---
+
+## Decision 2: MySQL XA DataSource Configuration
+
+**Decision**: Declare `MysqlXADataSource` bean manually; Atomikos starter wraps it automatically.
+
+**Rationale**: MySQL Connector/J ships `com.mysql.cj.jdbc.MysqlXADataSource` which implements
+`javax.sql.XADataSource`. The Atomikos starter registers an `XADataSourceWrapper` that, when
+given an `XADataSource` bean, produces a pooled `AtomikosDataSourceBean`. This avoids
+writing Atomikos pool configuration in code — only the raw XA datasource needs to be declared.
+
+**Critical flags** (must be set on `MysqlXADataSource`):
+- `pinGlobalTxToPhysicalConnection=true` — prevents MySQL from confusing XA sessions when
+  connections are reused from the pool
+- JDBC URL must include `allowXAStatements=true` — enables the driver to issue XA commands
+
+**Application properties** for Atomikos pool (read by `AtomikosDataSourceBean`):
+```yaml
+spring.jta.atomikos.datasource:
+  unique-resource-name: mysqlXaDs
+  max-pool-size: 10
+  min-pool-size: 2
+  borrow-connection-timeout: 30
+  test-query: "SELECT 1"
+spring.jta.atomikos.properties:
+  log-base-dir: ./atomikos-logs
+  transaction-manager-unique-id: xa-poc-tm
+  max-timeout: 60000
+```
+
+**Maven coordinate**: `com.mysql:mysql-connector-j` — managed by Spring Boot BOM.
+
+**Do NOT wrap in HikariCP**: Atomikos manages its own connection pool for XA datasources.
+Adding HikariCP breaks XA enrollment.
+
+---
+
+## Decision 3: Apache Artemis XA JMS ConnectionFactory Configuration
+
+**Decision**: Declare `ActiveMQXAConnectionFactory` bean from `artemis-jakarta-client`; Atomikos starter wraps it.
+
+**Rationale**: Artemis implements the JMS API and ships `ActiveMQXAConnectionFactory` which
+implements `javax.jms.XAConnectionFactory`. The Atomikos starter registers an
+`XAConnectionFactoryWrapper` that wraps it into an `AtomikosConnectionFactoryBean`.
+
+**Critical**: Use `artemis-jakarta-client` (Jakarta EE 10 / `jakarta.*` namespaces), NOT
+`artemis-jms-client` (which uses `javax.*` namespaces and is incompatible with Spring Boot 3).
+
+**Maven coordinate** (managed by Spring Boot BOM):
+```xml
+<dependency>
+    <groupId>org.apache.activemq</groupId>
+    <artifactId>artemis-jakarta-client</artifactId>
+</dependency>
+```
+
+**Application properties** for Atomikos JMS pool:
+```yaml
+spring.jta.atomikos.connectionfactory:
+  unique-resource-name: artemisXaCf
+  max-pool-size: 10
+  min-pool-size: 2
+  local-transaction-mode: false
+spring.artemis:
+  mode: native
+  broker-url: "tcp://localhost:61616"
+  user: admin
+  password: admin
+```
+
+---
+
+## Decision 4: Fault Injection Mechanism
+
+**Decision**: `@Value`-injected boolean flag in `EventProducerService`, controlled via Spring profile.
+
+**Rationale**: A simple configurable flag is transparent, testable, and trivially toggled via
+application properties or `@ActiveProfiles`. No AOP, no separate classpath dependencies, no
+method-signature coupling. The flag is off by default (`false`) — production safety guaranteed
+by the default value.
+
+**Pattern**:
+```java
+@Value("${xa-poc.fault-injection.enabled:false}")
+private boolean faultInjectionEnabled;
+```
+
+After `jmsTemplate.send(...)` and before method return, throw `RuntimeException` if flag is
+true. This positions the fault inside the XA transaction boundary, after the JMS enlistment,
+triggering a two-phase rollback of both MySQL and Artemis.
+
+**Profile activation**: `application-fault.yml` sets `xa-poc.fault-injection.enabled: true`.
+Tests activate it with `@ActiveProfiles("fault")`.
+
+---
+
+## Decision 5: Performance Measurement (Micrometer)
+
+**Decision**: Micrometer `Timer` with `publishPercentiles(0.50, 0.95, 0.99)` + custom
+throughput calculation; results serialized to JSON via Jackson.
+
+**Rationale**: Micrometer is already on the Spring Boot classpath. `Timer.builder(...).publishPercentiles(...)` uses HDR Histogram for in-process percentile computation — accurate for a single-JVM POC. The `Timer` records both `count` and `totalTime`, from which throughput is computable as `count / elapsedSeconds`.
+
+**Prometheus endpoint**: Add `micrometer-registry-prometheus` for optional Prometheus scraping
+during manual benchmark runs. Results file export (Jackson → JSON) is the primary output.
+
+**Configuration in `application-benchmark.yml`**:
+```yaml
+management:
+  metrics:
+    distribution:
+      percentiles:
+        xa.transaction.duration: 0.5, 0.95, 0.99
+      percentiles-histogram:
+        xa.transaction.duration: true
+      minimum-expected-value:
+        xa.transaction.duration: 1ms
+      maximum-expected-value:
+        xa.transaction.duration: 10s
+  endpoints:
+    web:
+      exposure:
+        include: prometheus, metrics
+```
+
+**Maven coordinates** (managed by Spring Boot BOM):
+```xml
+<dependency>
+    <groupId>io.micrometer</groupId>
+    <artifactId>micrometer-registry-prometheus</artifactId>
+</dependency>
+```
+
+---
+
+## Decision 6: Testcontainers Integration
+
+**Decision**: `MySQLContainer` + `ArtemisContainer` with `@DynamicPropertySource` (not
+`@ServiceConnection`) to override XA datasource properties dynamically.
+
+**Rationale**: `@ServiceConnection` auto-wires standard JDBC/JMS properties, but since the XA
+DataSource and ConnectionFactory are configured manually from `application.yml` properties,
+`@DynamicPropertySource` is required to feed container-assigned ports back into the manually
+declared beans.
+
+**Pattern**:
+```java
+@Container
+static MySQLContainer<?> mysql =
+    new MySQLContainer<>("mysql:8.0")
+        .withDatabaseName("xapoc")
+        .withUsername("xa")
+        .withPassword("xa");
+
+@Container
+static ArtemisContainer artemis =
+    new ArtemisContainer("apache/activemq-artemis:latest-alpine")
+        .withUser("admin").withPassword("admin");
+
+@DynamicPropertySource
+static void overrideProps(DynamicPropertyRegistry r) {
+    r.add("spring.datasource.url",
+        () -> mysql.getJdbcUrl() + "?allowXAStatements=true&pinGlobalTxToPhysicalConnection=true");
+    r.add("spring.datasource.username", mysql::getUsername);
+    r.add("spring.datasource.password", mysql::getPassword);
+    r.add("spring.artemis.broker-url",
+        () -> "tcp://" + artemis.getHost() + ":" + artemis.getMappedPort(61616));
+}
+```
+
+**Maven coordinates** (versions managed by Spring Boot BOM):
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-testcontainers</artifactId>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>org.testcontainers</groupId>
+    <artifactId>mysql</artifactId>
+    <scope>test</scope>
+</dependency>
+<dependency>
+    <groupId>org.testcontainers</groupId>
+    <artifactId>artemis</artifactId>
+    <scope>test</scope>
+</dependency>
+```
+
+**Atomikos log dir in tests**: Set `spring.jta.atomikos.properties.log-base-dir` to a
+`@TempDir` path via `@DynamicPropertySource` to prevent test runs from sharing or corrupting
+the Atomikos transaction log. Without this, parallel test JVMs conflict.
+
+---
+
+## Cross-Cutting Gotchas
+
+1. **Jakarta namespaces only** — All imports must be `jakarta.*`. `artemis-jms-client` uses
+   `javax.*` and silently fails at runtime with Spring Boot 3.
+2. **Atomikos version not in Spring BOM** — Pin `transactions-spring-boot3-starter` explicitly;
+   do not rely on BOM management for Atomikos.
+3. **MySQL XA flags mandatory** — `allowXAStatements=true` and `pinGlobalTxToPhysicalConnection=true`
+   must be in the JDBC URL or XA datasource properties; without them, XA commands fail or behave
+   incorrectly.
+4. **No HikariCP for XA** — The `AtomikosDataSourceBean` manages its own pool. Wrapping in
+   HikariCP breaks XA transaction enrollment.
+5. **Atomikos log directory must be per-test-JVM** — Use `@TempDir` + `@DynamicPropertySource`.
+6. **Spring Boot ArtemisAutoConfiguration conflict** — Declaring your own `ConnectionFactory`
+   bean causes the auto-configuration to back off. Set `spring.artemis.mode=native` to avoid
+   ambiguity.
+</file>
+
+<file path="specs/001-xa-transaction-poc/spec.md">
+# Feature Specification: XA Transaction POC — Reliable Message Production & Consumption
+
+**Feature Branch**: `001-xa-transaction-poc`
+**Created**: 2026-04-28
+**Status**: Draft
+**Input**: User description: "POC for XA transaction: Java 25 + Spring Boot 3.5, validate produce/consuming messages in ACID transactions. Producer persists sample events in MySQL DB and sends MQ messages to Apache Artemis. Consumer consumes these events. Failure handling: tests randomly produce exceptions before committing on producer DB but after sending the message — expected result: consumer should NOT receive this message. Also measure performance throughput and latency."
+
+## User Scenarios & Testing *(mandatory)*
+
+### User Story 1 — Happy-Path: Committed Event Reaches Consumer (Priority: P1)
+
+A developer triggers the producer to publish a sample event. The event is persisted to the
+database and a corresponding message is sent to the broker. The consumer picks up the message
+and processes it. Both operations succeed atomically.
+
+**Why this priority**: This is the foundational correctness scenario — XA must work when
+everything goes right before we can trust failure handling.
+
+**Independent Test**: Start producer, consume one message, assert the message matches the
+persisted DB record. Can be run as a standalone integration test with no other stories present.
+
+**Acceptance Scenarios**:
+
+1. **Given** the producer is running and connected to both MySQL and Artemis,
+   **When** a sample event is published without any injected fault,
+   **Then** the event record appears in the database AND the consumer receives exactly one
+   matching message.
+
+2. **Given** the consumer receives a message,
+   **When** it processes the message successfully,
+   **Then** no message is left in the queue (or dead-letter) and the database record is
+   present and consistent.
+
+---
+
+### User Story 2 — Failure Scenario: Rolled-Back Producer Does Not Deliver (Priority: P1)
+
+A developer triggers the producer with fault injection enabled. An exception is raised after
+the MQ message has been sent but before the database commit. The XA transaction rolls back.
+The consumer must receive no message.
+
+**Why this priority**: This is the core correctness invariant being validated by the POC.
+It is equally critical to the happy path.
+
+**Independent Test**: Run producer with fault injection; poll consumer for 5 seconds; assert
+zero messages received and zero DB records created.
+
+**Acceptance Scenarios**:
+
+1. **Given** the producer is configured with fault injection (exception after MQ send, before
+   DB commit),
+   **When** the producer runs,
+   **Then** the XA transaction rolls back, the database contains no new record, and the
+   consumer receives zero messages within 5 seconds.
+
+2. **Given** a rollback has occurred,
+   **When** the broker is inspected,
+   **Then** no message remains in the queue or in any dead-letter queue attributable to this
+   transaction.
+
+---
+
+### User Story 3 — Performance Baseline: Throughput and Latency Under Load (Priority: P2)
+
+A developer runs a benchmark that drives the producer at increasing message rates. Results are
+captured as structured output showing throughput (messages committed per second) and latency
+distribution (p50, p95, p99) end-to-end from producer trigger to consumer receipt.
+
+**Why this priority**: The POC must quantify whether XA overhead is acceptable for the
+target use case. This is secondary to correctness but still mandatory for the POC sign-off.
+
+**Independent Test**: Run the benchmark harness in isolation; assert results file is produced
+and contains all required metrics; optionally assert values are within configured targets.
+
+**Acceptance Scenarios**:
+
+1. **Given** the producer and consumer are running against the real MySQL and Artemis stack,
+   **When** the benchmark runs a sustained load for at least 60 seconds,
+   **Then** structured output (JSON or CSV) is produced containing: throughput msg/s,
+   p50 latency ms, p95 latency ms, p99 latency ms.
+
+2. **Given** the benchmark output is produced,
+   **When** results are compared against the constitution performance baseline,
+   **Then** throughput is ≥ 500 committed msgs/sec and p95 commit latency is ≤ 200 ms.
+
+---
+
+### Edge Cases
+
+- What happens when the Artemis broker is unavailable at producer start-up?
+- What happens when MySQL is unavailable mid-transaction?
+- What happens if the consumer crashes while processing a message — is the message redelivered?
+- What is the observed behaviour when the XA transaction coordinator (JTA) times out?
+- What happens when fault injection fires on every message vs. a random subset?
+
+## Requirements *(mandatory)*
+
+### Functional Requirements
+
+- **FR-001**: The system MUST enlist both the MySQL data source and the Artemis connection
+  factory in a single XA/JTA distributed transaction for every produced event.
+- **FR-002**: The producer MUST persist a sample event record to MySQL within the same XA
+  transaction that sends the corresponding message to Artemis.
+- **FR-003**: The consumer MUST subscribe to the Artemis queue and process received messages;
+  it MUST log each received message with its content.
+- **FR-004**: The system MUST provide a fault-injection mechanism that throws a configurable
+  exception after the MQ send but before the DB commit, triggering an XA rollback.
+- **FR-005**: When an XA rollback occurs (producer fault injected), the consumer MUST NOT
+  receive the message that was part of the rolled-back transaction.
+- **FR-006**: The system MUST produce benchmark results as structured output (JSON or CSV)
+  containing: throughput (msgs/sec), p50 latency (ms), p95 latency (ms), p99 latency (ms).
+- **FR-007**: Fault injection MUST be controllable via a configuration flag or Spring profile
+  so it can be disabled for benchmark runs and enabled for failure-scenario tests.
+- **FR-008**: The producer MUST support sending a configurable number of events in a single
+  benchmark run.
+
+### Key Entities
+
+- **SampleEvent**: Represents a produced event. Key attributes: unique ID, payload (string),
+  timestamp, status (COMMITTED / ROLLED_BACK). Persisted in MySQL.
+- **EventMessage**: The MQ representation of a SampleEvent. Contains event ID and payload.
+  Sent to Apache Artemis queue.
+- **BenchmarkResult**: Captures performance metrics for a benchmark run. Contains: run ID,
+  event count, duration, throughput, p50/p95/p99 latency values. Written to structured output.
+
+## Success Criteria *(mandatory)*
+
+### Measurable Outcomes
+
+- **SC-001**: In the happy-path scenario, 100% of committed events have a corresponding
+  consumer receipt with matching payload — verified by integration test assertion.
+- **SC-002**: In the failure scenario, 0 messages are received by the consumer within 5
+  seconds of a producer rollback — verified by integration test assertion.
+- **SC-003**: The benchmark harness consistently produces ≥ 500 committed messages per second
+  under sustained load on reference hardware.
+- **SC-004**: The p95 end-to-end commit latency (producer trigger → consumer receipt) is
+  ≤ 200 ms under the benchmark load.
+- **SC-005**: All benchmark results are captured in machine-readable format (JSON or CSV)
+  enabling comparison across runs.
+
+## Assumptions
+
+- The POC runs on a single developer machine (no distributed/clustered environment).
+- MySQL and Apache Artemis are available as local Docker containers or installed locally.
+- A JTA-compliant transaction manager (Atomikos or Narayana) is embedded in the Spring Boot
+  application; no external transaction coordinator is required.
+- The "sample event" payload is a simple string or small JSON object — no binary payloads.
+- Fault injection probability is 100% (always fires) in test mode, controllable via config.
+- Performance targets (≥500 msgs/sec, ≤200ms p95) are for committed transactions only;
+  rolled-back transactions are excluded from throughput/latency calculations.
+- The consumer is a simple synchronous listener — no complex processing chain.
+- No authentication or authorization is required for broker or database access in the POC.
+</file>
+
+<file path="specs/001-xa-transaction-poc/tasks.md">
+---
+description: "Task list for XA Transaction POC — Reliable Message Production & Consumption"
+---
+
+# Tasks: XA Transaction POC — Reliable Message Production & Consumption
+
+**Input**: Design documents from `specs/001-xa-transaction-poc/`
+**Prerequisites**: spec.md (required for user stories)
+**Branch**: `001-xa-transaction-poc`
+
+**Organization**: Tasks are grouped by user story to enable independent implementation and
+testing of each story.
+
+## Format: `[ID] [P?] [Story?] Description`
+
+- **[P]**: Can run in parallel (different files, no dependencies)
+- **[Story]**: Which user story this task belongs to (US1, US2, US3)
+- Exact file paths are included in every task description
+
+---
+
+## Phase 1: Setup (Project Initialization)
+
+**Purpose**: Bootstrap the Maven project and shared infrastructure configuration.
+
+- [x] T001 Initialize Maven project: create `pom.xml` with Spring Boot 3.5 parent, Java 25 toolchain, dependencies (spring-boot-starter-jms, spring-boot-starter-data-jpa, mysql-connector-j, atomikos transactions-spring-boot3-starter:6.0.0, artemis-jakarta-client, micrometer-registry-prometheus, testcontainers + testcontainers-mysql + testcontainers-artemis, awaitility) and Maven Wrapper (`mvnw`, `.mvn/wrapper/`)
+- [x] T002 Create Spring Boot main class `src/main/java/com/example/xapoc/XaTransactionPocApplication.java` annotated with `@SpringBootApplication` and `@EnableTransactionManagement`
+- [x] T003 [P] Create source directory tree: `src/main/java/com/example/xapoc/{config,domain,repository,producer,consumer,benchmark}/` and `src/test/java/com/example/xapoc/{integration,benchmark}/`
+- [x] T004 [P] Create `docker-compose.yml` at project root with MySQL 8 service (port 3306, database `xapoc`, user `xapoc`, password `xapoc`) and Apache Artemis 2.x service (port 61616 for AMQP/JMS, port 8161 for web console, default admin credentials)
+
+**Checkpoint**: `./mvnw validate` compiles; `docker-compose up -d` starts both containers.
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: XA infrastructure that ALL user stories depend on. No story can be tested
+until this phase is complete.
+
+**⚠️ CRITICAL**: Complete and verify each task before starting Phase 3.
+
+- [x] T005 ~~Configure Atomikos JTA transaction manager in `AtomikosJtaConfig.java`~~ **SUPERSEDED**: Atomikos Spring Boot 3 starter (`transactions-spring-boot3-starter`) auto-configures `UserTransactionManager`, `UserTransaction`, and `JtaTransactionManager` — no manual config class needed.
+- [x] T006 [P] Configure XA DataSource in `src/main/java/com/example/xapoc/config/DataSourceConfig.java`: create `MysqlXADataSource` from `application.yml` properties, wrap in `AtomikosDataSourceBean`, expose as `DataSource` bean
+- [x] T007 [P] Configure XA JMS ConnectionFactory in `src/main/java/com/example/xapoc/config/JmsConfig.java`: create `ActiveMQXAConnectionFactory` from Artemis broker URL, wrap in `AtomikosConnectionFactoryBean`, define `JmsTemplate` and `DefaultJmsListenerContainerFactory`
+- [x] T008 [P] Create `SampleEvent` JPA entity in `src/main/java/com/example/xapoc/domain/SampleEvent.java`: fields `id` (UUID, @GeneratedValue), `payload` (String, @Column(nullable=false)), `createdAt` (Instant, set in `@PrePersist`); mapped to table `sample_event`
+- [x] T009 [P] Create `SampleEventRepository` in `src/main/java/com/example/xapoc/repository/SampleEventRepository.java` extending `JpaRepository<SampleEvent, UUID>`
+- [x] T010 Create base `src/main/resources/application.yml` with Atomikos datasource/connectionfactory properties, Artemis broker URL, JPA DDL auto `create-drop`, logging levels
+- [x] T011 Create `src/test/resources/application-test.yml` and `src/test/java/com/example/xapoc/AbstractIntegrationTest.java` with `MySQLContainer` + `ArtemisContainer` and `@DynamicPropertySource`
+
+**Checkpoint**: A minimal `@SpringBootTest` loading the application context with Testcontainers passes without errors — XA beans wire correctly.
+
+---
+
+## Phase 3: User Story 1 — Happy-Path: Committed Event Reaches Consumer (Priority: P1) 🎯 MVP
+
+**Goal**: Prove that when a producer publishes an event with no fault, exactly one DB record
+is created AND the consumer receives exactly one matching message.
+
+**Independent Test**: Run `HappyPathIT` in isolation; it starts MySQL + Artemis via
+Testcontainers, sends one event, asserts the DB record exists and the consumer received a
+message with matching payload.
+
+### Implementation for User Story 1
+
+- [x] T012 [US1] Implement `EventProducerService` in `src/main/java/com/example/xapoc/producer/EventProducerService.java`: method `produceEvent(String payload)` annotated `@Transactional`; saves `SampleEvent` via repository; sends JMS TextMessage to `sample.events`; fault injection flag included
+- [x] T013 [P] [US1] Implement `EventConsumerService` in `src/main/java/com/example/xapoc/consumer/EventConsumerService.java`: `@JmsListener(destination="sample.events")` collects messages in `CopyOnWriteArrayList<String>` with `getReceivedMessages()` and `clearMessages()` for test assertions
+- [x] T014 [US1] Write `HappyPathIT` in `src/test/java/com/example/xapoc/integration/HappyPathIT.java`: assert 1 consumer message + 1 DB record after `produceEvent("hello-world")`
+
+**Checkpoint**: `./mvnw test -Dtest=HappyPathIT` passes green. US1 is independently validated.
+
+---
+
+## Phase 4: User Story 2 — Failure Scenario: Rolled-Back Producer Delivers Nothing (Priority: P1)
+
+**Goal**: Prove that an XA rollback (exception after MQ send, before DB commit) leaves the
+consumer with zero messages and the database with zero records.
+
+**Independent Test**: Run `FaultInjectionIT` in isolation; enable fault profile; send one
+event; assert consumer receives nothing within 5 seconds and DB is empty.
+
+### Implementation for User Story 2
+
+- [x] T015 [US2] Fault injection added to `EventProducerService`: `@Value("${xa-poc.fault-injection.enabled:false}") boolean faultInjectionEnabled`; throws `RuntimeException` after `jmsTemplate.send(...)` when enabled
+- [x] T016 [P] [US2] Create `src/main/resources/application-fault.yml`: `xa-poc.fault-injection.enabled: true` + Atomikos DEBUG logging
+- [x] T017 [US2] Write `FaultInjectionIT` in `src/test/java/com/example/xapoc/integration/FaultInjectionIT.java` with `@ActiveProfiles("fault")`: assert 0 messages received in 5s + 0 DB records
+
+**Checkpoint**: `./mvnw test -Dtest=FaultInjectionIT` passes green — XA rollback confirmed.
+
+---
+
+## Phase 5: User Story 3 — Performance Baseline: Throughput and Latency Under Load (Priority: P2)
+
+**Goal**: Quantify XA overhead — measure committed throughput (msgs/sec) and latency
+distribution (p50, p95, p99 ms) end-to-end, and export results as JSON.
+
+**Independent Test**: Run `PerformanceBenchmarkIT` in isolation; it produces a `benchmark-result.json` file and asserts it contains all required metric fields.
+
+### Implementation for User Story 3
+
+- [x] T018 [P] [US3] Create `BenchmarkResult` record in `src/main/java/com/example/xapoc/benchmark/BenchmarkResult.java`: fields `runId`, `eventCount`, `durationMs`, `throughputPerSec`, `p50Ms`, `p95Ms`, `p99Ms` with `@JsonProperty`
+- [x] T019 [P] [US3] Create `src/main/resources/application-benchmark.yml`: `xa-poc.benchmark.event-count: 1000` + Micrometer percentile histogram config
+- [x] T020 [US3] Implement `BenchmarkRunner` in `src/main/java/com/example/xapoc/benchmark/BenchmarkRunner.java`: Micrometer `Timer` with `publishPercentiles(0.50, 0.95, 0.99)`, loops `eventCount` times, extracts `HistogramSnapshot`, writes `benchmark-result.json` via Jackson
+- [x] T021 [US3] Write `PerformanceBenchmarkIT` in `src/test/java/com/example/xapoc/benchmark/PerformanceBenchmarkIT.java` with `@ActiveProfiles("benchmark")`: validates result file structure and p50 ≤ p95 ≤ p99 ordering
+
+**Checkpoint**: `./mvnw test -Dtest=PerformanceBenchmarkIT` passes; `benchmark-result.json` is present with all metric fields.
+
+---
+
+## Phase 6: Polish & Cross-Cutting Concerns
+
+**Purpose**: Documentation, cleanup, and end-to-end validation.
+
+- [x] T022 [P] `specs/001-xa-transaction-poc/quickstart.md` — created during plan phase with docker-compose startup, per-test commands, and troubleshooting
+- [x] T023 [P] `CLAUDE.md` updated between `<!-- SPECKIT START -->` and `<!-- SPECKIT END -->` to reference `specs/001-xa-transaction-poc/plan.md`
+- [x] T024 Code cleanup: profiles documented in `application.yml` comments; no `System.out.println` in production classes; `.gitignore` created covering `target/`, `atomikos-logs/`, `benchmark-result.json`, `*.iml`, `.DS_Store`
+
+---
+
+## Dependencies & Execution Order
+
+### Phase Dependencies
+
+- **Setup (Phase 1)**: No dependencies — start immediately
+- **Foundational (Phase 2)**: Depends on Phase 1 completion — BLOCKS all user stories
+- **US1 — Phase 3**: Depends on Phase 2 completion; no dependency on US2 or US3
+- **US2 — Phase 4**: Depends on Phase 2 completion AND T012 (EventProducerService from US1)
+- **US3 — Phase 5**: Depends on Phase 2 completion AND T012 (EventProducerService)
+- **Polish (Phase 6)**: Depends on all user stories being complete
+
+### Parallel Opportunities
+
+```bash
+# Phase 1 — launch together:
+T003  # Directory structure
+T004  # docker-compose.yml
+
+# Phase 2 — after T001/T002, T006+ after T005:
+T006  # XA DataSource  \
+T007  # XA JMS Config   > all parallel after T005 (auto-configured by starter)
+T008  # SampleEvent     /
+T009  # Repository      /
+
+# Phase 3 — after Phase 2:
+T012  # EventProducerService  \
+T013  # EventConsumerService   > parallel
+
+# Phase 5 — after T012:
+T018  # BenchmarkResult  \
+T019  # application-benchmark.yml > parallel
+```
+
+---
+
+## Implementation Strategy
+
+### MVP First (User Story 1 Only)
+
+1. Complete Phase 1: Setup (T001–T004)
+2. Complete Phase 2: Foundational (T005–T011)
+3. Complete Phase 3: User Story 1 (T012–T014)
+4. **STOP and VALIDATE**: Run `./mvnw test -Dtest=HappyPathIT` — must pass
+5. XA happy path proven ✓
+
+### Incremental Delivery
+
+1. Setup + Foundational → XA infrastructure ready
+2. US1 (Happy Path) → `HappyPathIT` green ✓ (MVP)
+3. US2 (Fault Injection) → `FaultInjectionIT` green ✓
+4. US3 (Benchmark) → `PerformanceBenchmarkIT` green + `benchmark-result.json` ✓
+5. Polish → Documentation complete
+
+---
+
+## Notes
+
+- `[P]` tasks = different files, no incomplete dependencies — safe to parallelize
+- `[Story]` maps each task to its user story for traceability
+- T005 was superseded: Atomikos starter auto-configures JTA — no `AtomikosJtaConfig.java` needed
+- Atomikos uniqueResourceName values (`mysqlXaDs`, `artemisXaCf`) MUST be unique per JVM
+- Use `@ActiveProfiles` in tests for fault/benchmark modes; base profile is `test`
+- `EventConsumerService.clearMessages()` MUST be called in `@BeforeEach` to isolate tests
+- Performance thresholds (≥500 msg/s, ≤200ms p95) apply to real Docker infra, not Testcontainers
+</file>
+
+<file path="docker-compose.yml">
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: xapoc
+      MYSQL_USER: xapoc
+      MYSQL_PASSWORD: xapoc
+    ports:
+      - "3306:3306"
+    command: --innodb-support-xa=ON
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  artemis:
+    image: apache/activemq-artemis:latest-alpine
+    environment:
+      ARTEMIS_USER: admin
+      ARTEMIS_PASSWORD: admin
+    ports:
+      - "61616:61616"
+      - "8161:8161"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8161/console/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+</file>
+
+<file path="pom.xml">
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.5.0</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.example</groupId>
+    <artifactId>xa-transaction-poc</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>xa-transaction-poc</name>
+    <description>POC for XA distributed transactions — Spring Boot 3.5 + MySQL + Apache Artemis</description>
+
+    <properties>
+        <java.version>25</java.version>
+
+        <atomikos.version>6.0.0</atomikos.version>
+    </properties>
+
+    <dependencies>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-artemis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+
+        <dependency>
+            <groupId>com.atomikos</groupId>
+            <artifactId>transactions-spring-boot3-starter</artifactId>
+            <version>${atomikos.version}</version>
+        </dependency>
+
+
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+        </dependency>
+
+
+        <dependency>
+            <groupId>org.apache.activemq</groupId>
+            <artifactId>artemis-jakarta-client</artifactId>
+        </dependency>
+
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>mysql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+
+
+
+
+
+
+
+                    <skipTests>true</skipTests>
+                </configuration>
+                <executions>
+
+                    <execution>
+                        <id>integration-tests</id>
+                        <phase>test</phase>
+                        <goals><goal>test</goal></goals>
+                        <configuration>
+                            <skipTests>false</skipTests>
+                            <argLine>--add-opens java.base/java.lang=ALL-UNNAMED
+                                     --add-opens java.base/java.util=ALL-UNNAMED</argLine>
+                            <includes>
+                                <include>**/integration/**IT.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+
+                    <execution>
+                        <id>benchmark-tests</id>
+                        <phase>test</phase>
+                        <goals><goal>test</goal></goals>
+                        <configuration>
+                            <skipTests>false</skipTests>
+                            <argLine>--add-opens java.base/java.lang=ALL-UNNAMED
+                                     --add-opens java.base/java.util=ALL-UNNAMED</argLine>
+                            <includes>
+                                <include>**/benchmark/**IT.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+</file>
+
+<file path="README.md">
+# XA Transaction POC
+
+Validates distributed XA transactions across MySQL and Apache Artemis using Spring Boot 3.5 + Atomikos. Proves that a single two-phase commit (2PC) coordinates a DB write and a JMS send atomically — if the transaction rolls back, neither the database record nor the queue message survives.
+
+## What it validates
+
+| Scenario | Expected outcome |
+|----------|-----------------|
+| Happy path: producer commits | DB record created + consumer receives message |
+| Fault injection: exception after JMS send, before DB commit | XA rollback — consumer receives nothing, DB stays empty |
+| Benchmark: 100 XA transactions | Throughput and latency (p50/p95/p99) reported to `benchmark-result.json` |
+
+## Prerequisites
+
+- Java 25 (`temurin-25` recommended)
+- Maven 3.9+
+- Docker (Testcontainers pulls MySQL 8 and Apache Artemis automatically)
+
+## Running the tests
+
+> All commands assume Java 25 is not your default JDK. Adjust `JAVA_HOME` if it is.
+
+**Full test suite** (integration tests run first, benchmark last):
+
+```bash
+JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home mvn test
+```
+
+**Integration tests only** (happy-path + fault injection):
+
+```bash
+JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home mvn surefire:test@integration-tests
+```
+
+**Benchmark only**:
+
+```bash
+JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home mvn surefire:test@benchmark-tests
+```
+
+**Single test class**:
+
+```bash
+JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home mvn test -Dtest=HappyPathIT
+```
+
+## Tech stack
+
+- **Spring Boot 3.5** + JTA (`spring.jta.enabled=true`)
+- **Atomikos 6.0.0** — XA transaction manager (manually configured; the auto-configuration is incompatible with Spring Boot 3.3+)
+- **MySQL 8** — XA-capable datasource (`MysqlXADataSource`)
+- **Apache Artemis** — XA-capable JMS broker (`ActiveMQXAConnectionFactory`)
+- **Testcontainers** — spins up MySQL and Artemis for every test run
+</file>
+
+<file path="CLAUDE.md">
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+at `specs/001-xa-transaction-poc/plan.md`
+<!-- SPECKIT END -->
+</file>
+
+</files>

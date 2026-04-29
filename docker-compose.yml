@@ -1,0 +1,30 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: xapoc
+      MYSQL_USER: xapoc
+      MYSQL_PASSWORD: xapoc
+    ports:
+      - "3306:3306"
+    command: --innodb-support-xa=ON
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  artemis:
+    image: apache/activemq-artemis:latest-alpine
+    environment:
+      ARTEMIS_USER: admin
+      ARTEMIS_PASSWORD: admin
+    ports:
+      - "61616:61616"   # JMS / AMQP / CORE
+      - "8161:8161"     # Web console (http://localhost:8161/console)
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8161/console/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
