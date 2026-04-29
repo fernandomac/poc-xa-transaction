@@ -58,6 +58,12 @@
             <artifactId>artemis-jakarta-client</artifactId>
         </dependency>
 
+        <!-- Spring Web — provides embedded Tomcat and @RestController support -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
         <!-- Jackson — pulled transitively as runtime by spring-boot-starter-artemis; explicit compile scope needed -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>

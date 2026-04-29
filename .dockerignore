@@ -1,0 +1,19 @@
+.git/
+load-tests/
+docker/
+specs/
+docs/
+src/
+*.md
+*.log
+.env
+.env.*
+.DS_Store
+.idea/
+*.iml
+# Keep target/*.jar for the Docker build
+target/classes/
+target/generated-sources/
+target/maven-*/
+target/surefire-reports/
+target/test-classes/

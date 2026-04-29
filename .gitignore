@@ -29,3 +29,9 @@ benchmark-result.json
 # Logs
 *.log
 logs/
+
+# Gatling HTML reports (generated per run)
+load-tests/target/
+
+# Load test result files (commit selectively after review)
+load-tests/results/
