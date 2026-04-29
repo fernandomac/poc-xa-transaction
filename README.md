@@ -74,13 +74,13 @@ docker-compose ps   # wait until all five services show "healthy"
 **Default (5,000 RPS for 5 min)**
 
 ```bash
-mvn gatling:test -pl load-tests
+mvn gatling:test -f load-tests/pom.xml
 ```
 
 **Custom RPS / duration**
 
 ```bash
-mvn gatling:test -pl load-tests \
+mvn gatling:test -f load-tests/pom.xml \
   -Dgatling.peakRps=1000 \
   -Dgatling.rampSeconds=30 \
   -Dgatling.sustainSeconds=120
@@ -89,7 +89,7 @@ mvn gatling:test -pl load-tests \
 **Remote target**
 
 ```bash
-mvn gatling:test -pl load-tests \
+mvn gatling:test -f load-tests/pom.xml \
   -Dgatling.baseUrl=http://<host>:8080 \
   -Dgatling.peakRps=2000
 ```

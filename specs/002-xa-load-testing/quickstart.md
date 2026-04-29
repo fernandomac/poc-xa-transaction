@@ -67,7 +67,7 @@ The **XA Load Test** dashboard loads automatically. All panels display "No data"
 ### Step 5: Run the Gatling load test
 
 ```bash
-mvn gatling:test -pl load-tests
+mvn gatling:test -f load-tests/pom.xml
 ```
 
 Default parameters: 60s ramp to 5,000 RPS → 5 minutes sustained at 5,000 RPS.
@@ -103,7 +103,7 @@ The `-v` flag removes the Prometheus data volume. Omit it to retain historical m
 Override the default 5,000 RPS to probe the system ceiling at a lower rate:
 
 ```bash
-mvn gatling:test -pl load-tests \
+mvn gatling:test -f load-tests/pom.xml \
   -Dgatling.peakRps=1000 \
   -Dgatling.rampSeconds=30 \
   -Dgatling.sustainSeconds=120
@@ -116,7 +116,7 @@ mvn gatling:test -pl load-tests \
 Point the load driver at a remote host:
 
 ```bash
-mvn gatling:test -pl load-tests \
+mvn gatling:test -f load-tests/pom.xml \
   -Dgatling.baseUrl=http://192.168.1.100:8080 \
   -Dgatling.peakRps=2000
 ```
