@@ -52,6 +52,107 @@ JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home mvn tes
 - **Apache Artemis** — XA-capable JMS broker (`ActiveMQXAConnectionFactory`)
 - **Testcontainers** — spins up MySQL and Artemis for every test run
 
+## Load Testing
+
+Gatling-based load tests live in the `load-tests/` directory. They drive `POST /api/events` against the full Docker stack (app + MySQL + Artemis) and expose live metrics in Grafana.
+
+### Prerequisites
+
+- Docker Desktop running
+- Fat JAR built: `JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home mvn package -DskipTests`
+- Ports 3000, 3306, 8080, 9090, 61616 free
+
+### Start the stack
+
+```bash
+docker-compose up -d
+docker-compose ps   # wait until all five services show "healthy"
+```
+
+### Scenarios
+
+**Default (5,000 RPS for 5 min)**
+
+```bash
+mvn gatling:test -pl load-tests
+```
+
+**Custom RPS / duration**
+
+```bash
+mvn gatling:test -pl load-tests \
+  -Dgatling.peakRps=1000 \
+  -Dgatling.rampSeconds=30 \
+  -Dgatling.sustainSeconds=120
+```
+
+**Remote target**
+
+```bash
+mvn gatling:test -pl load-tests \
+  -Dgatling.baseUrl=http://<host>:8080 \
+  -Dgatling.peakRps=2000
+```
+
+All parameters and their defaults:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `gatling.baseUrl` | `http://localhost:8080` | Target host |
+| `gatling.peakRps` | `5000` | Peak requests per second |
+| `gatling.rampSeconds` | `60` | Ramp-up duration |
+| `gatling.sustainSeconds` | `300` | Sustained load duration |
+
+### Checking results
+
+**Gatling HTML report** — opens automatically after each run:
+
+```bash
+open load-tests/target/gatling/*/index.html
+```
+
+Key thresholds: p95 < 100 ms, p99 < 150 ms, error rate ≤ 0.1%.
+
+**Grafana dashboard** — live metrics during a running test:
+
+Open `http://localhost:3000` (admin / admin). The **XA Load Test** dashboard loads automatically with six panels:
+
+- XA transaction throughput and p50/p95/p99 latency
+- HTTP request rate and p95/p99 latency
+- XA error rate (5xx responses)
+- JVM heap usage
+
+Panels update every 5 seconds. No import step required.
+
+**Prometheus raw metrics**: `http://localhost:9090`
+
+### Persist and compare runs
+
+Save the result of any Gatling run to a structured JSON file:
+
+```bash
+load-tests/scripts/save-result.sh
+# writes load-tests/results/run-<timestamp>.json
+```
+
+Compare two runs and flag regressions > 10%:
+
+```bash
+load-tests/scripts/compare-results.sh \
+  load-tests/results/run-<baseline>.json \
+  load-tests/results/run-<candidate>.json
+```
+
+Exits 0 if all metrics are within 10%, exits 1 and prints `REGRESSION DETECTED` if any metric regresses.
+
+### Tear down
+
+```bash
+docker-compose down -v   # -v removes the Prometheus data volume
+```
+
+---
+
 ## Repomix
 
 ```aiignore
