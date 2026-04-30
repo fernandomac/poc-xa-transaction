@@ -134,6 +134,12 @@
                             <argLine>--add-opens java.base/java.lang=ALL-UNNAMED
                                      --add-opens java.base/java.util=ALL-UNNAMED
                                      --enable-native-access=ALL-UNNAMED</argLine>
+                            <environmentVariables>
+                                <!-- Docker Engine 26+ requires API >= 1.40; docker-java's negotiation
+                                     request uses 1.32 as the path prefix and gets rejected. Pinning
+                                     to 1.47 skips negotiation and targets a version both sides support. -->
+                                <DOCKER_API_VERSION>1.47</DOCKER_API_VERSION>
+                            </environmentVariables>
                             <includes>
                                 <include>**/integration/**IT.java</include>
                             </includes>
@@ -149,6 +155,9 @@
                             <argLine>--add-opens java.base/java.lang=ALL-UNNAMED
                                      --add-opens java.base/java.util=ALL-UNNAMED
                                      --enable-native-access=ALL-UNNAMED</argLine>
+                            <environmentVariables>
+                                <DOCKER_API_VERSION>1.47</DOCKER_API_VERSION>
+                            </environmentVariables>
                             <includes>
                                 <include>**/benchmark/**IT.java</include>
                             </includes>
