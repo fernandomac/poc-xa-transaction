@@ -35,3 +35,6 @@ load-tests/target/
 
 # Load test result files (commit selectively after review)
 load-tests/results/
+
+# GCP compose: Gatling reports bind-mounted to VM filesystem
+gatling-reports/

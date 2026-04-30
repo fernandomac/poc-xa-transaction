@@ -153,6 +153,82 @@ docker-compose down -v   # -v removes the Prometheus data volume
 
 ---
 
+### Running on a GCP VM
+
+Use `docker-compose.gcp.yml` when Rancher Desktop or a local machine can't sustain the load. Key differences from the local compose file:
+
+| | Local (`docker-compose.yml`) | GCP (`docker-compose.gcp.yml`) |
+|---|---|---|
+| App image | Pre-built JAR (`Dockerfile`) | Multi-stage build inside Docker (`Dockerfile.gcp`) |
+| Platform | Host default | `linux/amd64` explicit |
+| Resource limits | None | Set per service (prevents OOM kills) |
+| Restart policy | None | `unless-stopped` / `on-failure` |
+| Data volumes | Ephemeral | Named volumes (survive restarts) |
+| Gatling | Run from host | Docker service (`--profile gatling`) |
+| Reports | `load-tests/target/gatling/` | `./gatling-reports/` on VM disk |
+
+**Recommended VM size**: e2-standard-4 (4 vCPU, 16 GB) or larger.
+
+**Setup on the VM** (one-time):
+
+```bash
+# Install Docker Engine + Compose plugin
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER && newgrp docker
+
+# Clone the repo
+git clone <repo-url> && cd poc-xa-transaction
+```
+
+**Start the stack** (builds the app image from source — no local JAR needed):
+
+```bash
+docker compose -f docker-compose.gcp.yml up -d --build
+docker compose -f docker-compose.gcp.yml ps   # wait for all healthy
+```
+
+**Smoke test**:
+
+```bash
+curl -X POST http://localhost:8080/api/events \
+  -H "Content-Type: application/json" \
+  -d '{"payload": "smoke-test"}' -w "\nHTTP %{http_code}\n"
+```
+
+**Run Gatling** (inside Docker, targets `app:8080` on the internal network):
+
+```bash
+docker compose -f docker-compose.gcp.yml --profile gatling run --rm gatling
+```
+
+Override defaults with environment variables:
+
+```bash
+GATLING_PEAK_RPS=2000 GATLING_SUSTAIN_SECONDS=120 \
+  docker compose -f docker-compose.gcp.yml --profile gatling run --rm gatling
+```
+
+**Check results**:
+
+- HTML report appears at `./gatling-reports/*/index.html` on the VM disk
+- Grafana: `http://<vm-external-ip>:3000` (admin / admin) — open GCP firewall port 3000
+- Prometheus: `http://<vm-external-ip>:9090`
+
+To open Grafana without touching firewall rules, use an SSH tunnel:
+
+```bash
+ssh -L 3000:localhost:3000 -L 9090:localhost:9090 <user>@<vm-external-ip>
+# then open http://localhost:3000 locally
+```
+
+**Tear down**:
+
+```bash
+docker compose -f docker-compose.gcp.yml down -v
+```
+
+---
+
 ## Repomix
 
 ```aiignore
