@@ -171,14 +171,16 @@ Use `docker-compose.gcp.yml` when Rancher Desktop or a local machine can't susta
 
 **Setup on the VM** (one-time):
 
-```bash
-# Install Docker Engine + Compose plugin
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER && newgrp docker
+SSH into the VM, then clone the repo and run the setup script:
 
-# Clone the repo
+```bash
 git clone <repo-url> && cd poc-xa-transaction
+chmod +x scripts/setup-gcp-vm.sh
+./scripts/setup-gcp-vm.sh
+newgrp docker   # activate Docker group without logging out
 ```
+
+The script installs Docker Engine, Java 25 (Eclipse Temurin), and Maven 3.9.9. It handles Ubuntu 26 automatically — if the Adoptium repository doesn't yet carry packages for Ubuntu 26, it falls back to the Ubuntu 24.04 LTS packages, which are compatible.
 
 **Start the stack** (builds the app image from source — no local JAR needed):
 
