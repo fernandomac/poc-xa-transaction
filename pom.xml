@@ -132,7 +132,8 @@
                         <configuration>
                             <skipTests>false</skipTests>
                             <argLine>--add-opens java.base/java.lang=ALL-UNNAMED
-                                     --add-opens java.base/java.util=ALL-UNNAMED</argLine>
+                                     --add-opens java.base/java.util=ALL-UNNAMED
+                                     --enable-native-access=ALL-UNNAMED</argLine>
                             <includes>
                                 <include>**/integration/**IT.java</include>
                             </includes>
@@ -146,7 +147,8 @@
                         <configuration>
                             <skipTests>false</skipTests>
                             <argLine>--add-opens java.base/java.lang=ALL-UNNAMED
-                                     --add-opens java.base/java.util=ALL-UNNAMED</argLine>
+                                     --add-opens java.base/java.util=ALL-UNNAMED
+                                     --enable-native-access=ALL-UNNAMED</argLine>
                             <includes>
                                 <include>**/benchmark/**IT.java</include>
                             </includes>
