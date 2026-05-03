@@ -1,0 +1,13 @@
+.git/
+load-tests/
+docker/
+specs/
+docs/
+*.md
+*.log
+.env
+.env.*
+.DS_Store
+.idea/
+*.iml
+target/
