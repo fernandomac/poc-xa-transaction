@@ -22,7 +22,7 @@ services:
     environment:
       ARTEMIS_USER: admin
       ARTEMIS_PASSWORD: admin
-      EXTRA_ARGS: "--address-full-policy PAGE"
+      ARTEMIS_MAX_MEMORY: 1024M
     ports:
       - "61616:61616"
       - "8161:8161"
