@@ -9,7 +9,7 @@ COPY pom.xml .
 RUN mvn dependency:go-offline -q 2>&1 | grep -v "^\[INFO\] Downloading" || true
 
 COPY src ./src
-RUN mvn package -DskipTests -q
+RUN mvn package -Dmaven.test.skip=true -q
 
 FROM eclipse-temurin:25-jdk
 WORKDIR /app

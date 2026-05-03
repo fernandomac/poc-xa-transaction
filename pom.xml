@@ -135,10 +135,11 @@
                                      --add-opens java.base/java.util=ALL-UNNAMED
                                      --enable-native-access=ALL-UNNAMED</argLine>
                             <environmentVariables>
-                                <!-- Docker Engine 26+ requires API >= 1.40; docker-java's negotiation
-                                     request uses 1.32 as the path prefix and gets rejected. Pinning
-                                     to 1.47 skips negotiation and targets a version both sides support. -->
-                                <DOCKER_API_VERSION>1.47</DOCKER_API_VERSION>
+                                <!-- Docker Engine 26+ dropped support for API < 1.40. docker-java's
+                                     negotiation request uses 1.32 as path prefix and gets rejected.
+                                     Forcing the strategy and version bypasses broken negotiation. -->
+                                <DOCKER_API_VERSION>1.45</DOCKER_API_VERSION>
+                                <TESTCONTAINERS_DOCKER_CLIENT_STRATEGY>org.testcontainers.dockerclient.UnixSocketClientProviderStrategy</TESTCONTAINERS_DOCKER_CLIENT_STRATEGY>
                             </environmentVariables>
                             <includes>
                                 <include>**/integration/**IT.java</include>
@@ -156,7 +157,8 @@
                                      --add-opens java.base/java.util=ALL-UNNAMED
                                      --enable-native-access=ALL-UNNAMED</argLine>
                             <environmentVariables>
-                                <DOCKER_API_VERSION>1.47</DOCKER_API_VERSION>
+                                <DOCKER_API_VERSION>1.45</DOCKER_API_VERSION>
+                                <TESTCONTAINERS_DOCKER_CLIENT_STRATEGY>org.testcontainers.dockerclient.UnixSocketClientProviderStrategy</TESTCONTAINERS_DOCKER_CLIENT_STRATEGY>
                             </environmentVariables>
                             <includes>
                                 <include>**/benchmark/**IT.java</include>
