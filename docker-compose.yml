@@ -8,6 +8,8 @@ services:
       MYSQL_PASSWORD: xapoc
     ports:
       - "3306:3306"
+    volumes:
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/01-xa-privileges.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
       interval: 5s
