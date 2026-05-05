@@ -1,6 +1,12 @@
 # XA Transaction POC — Base Configuration
 # Profiles: fault (fault injection), benchmark (perf testing), test (Testcontainers)
 
+server:
+  tomcat:
+    threads:
+      max: 500
+    accept-count: 500
+
 spring:
   datasource:
     # URL includes XA-required parameters for MySQL Connector/J
@@ -30,14 +36,14 @@ spring:
         max-actives: 200
       datasource:
         unique-resource-name: mysqlXaDs
-        max-pool-size: 50
-        min-pool-size: 5
+        max-pool-size: 200
+        min-pool-size: 10
         borrow-connection-timeout: 30
         test-query: "SELECT 1"
       connectionfactory:
         unique-resource-name: artemisXaCf
-        max-pool-size: 50
-        min-pool-size: 5
+        max-pool-size: 200
+        min-pool-size: 10
         local-transaction-mode: false
 
 management:
