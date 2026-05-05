@@ -167,29 +167,40 @@ Use `docker-compose.gcp.yml` when Rancher Desktop or a local machine can't susta
 | Gatling | Run from host | Docker service (`--profile gatling`) |
 | Reports | `load-tests/target/gatling/` | `./gatling-reports/` on VM disk |
 
-**Recommended VM size**: e2-standard-4 (4 vCPU, 16 GB) or larger.
+#### Architecture: two VMs
 
-**Setup on the VM** (one-time):
+Running the load generator on the same VM as the app skews results — Gatling and the JVM compete for CPU, and the Docker network adds overhead. The recommended setup uses two VMs in the same GCP region/VPC so traffic stays on Google's internal backbone (sub-millisecond latency, no egress cost):
 
-SSH into the VM, then clone the repo and run the setup script:
+```
+┌─────────────────────────────┐      GCP internal network      ┌──────────────────────────┐
+│  VM 1 — App VM              │ ────────────────────────────── │  VM 2 — Gatling VM       │
+│  docker-compose.gcp.yml     │  http://<internal-ip>:8080     │  mvn gatling:test        │
+│  app + mysql + artemis      │                                 │  Java + Maven only       │
+│  prometheus + grafana       │                                 │  no Docker needed        │
+└─────────────────────────────┘                                 └──────────────────────────┘
+```
+
+**Recommended VM sizes**: App VM → e2-standard-4 (4 vCPU, 16 GB) or larger. Gatling VM → e2-standard-2 (2 vCPU, 8 GB) is sufficient. Both must be in the same region.
+
+#### VM 1 — App VM setup
+
+SSH into the App VM, clone the repo, and run the full setup script:
 
 ```bash
 git clone <repo-url> && cd poc-xa-transaction
 chmod +x scripts/setup-gcp-vm.sh
 ./scripts/setup-gcp-vm.sh
-newgrp docker   # activate Docker group without logging out
+newgrp docker
 ```
 
-The script installs Docker Engine, Java 25 (Eclipse Temurin), and Maven 3.9.9. It handles Ubuntu 26 automatically — if the Adoptium repository doesn't yet carry packages for Ubuntu 26, it falls back to the Ubuntu 24.04 LTS packages, which are compatible.
-
-**Start the stack** (builds the app image from source — no local JAR needed):
+Start the stack (builds the app image from source):
 
 ```bash
 docker compose -f docker-compose.gcp.yml up -d --build
 docker compose -f docker-compose.gcp.yml ps   # wait for all healthy
 ```
 
-**Smoke test**:
+Smoke test:
 
 ```bash
 curl -X POST http://localhost:8080/api/events \
@@ -197,29 +208,41 @@ curl -X POST http://localhost:8080/api/events \
   -d '{"payload": "smoke-test"}' -w "\nHTTP %{http_code}\n"
 ```
 
-**Run Gatling** (inside Docker, targets `app:8080` on the internal network):
+Get the App VM's **internal** IP (use this from the Gatling VM — never the external IP):
 
 ```bash
-docker compose -f docker-compose.gcp.yml --profile gatling run --rm gatling
+hostname -I | awk '{print $1}'
 ```
 
-Override defaults with environment variables:
+#### VM 2 — Gatling VM setup
+
+SSH into the Gatling VM, clone the repo, and run the lighter setup script (Java + Maven, no Docker):
 
 ```bash
-GATLING_PEAK_RPS=2000 GATLING_SUSTAIN_SECONDS=120 \
-  docker compose -f docker-compose.gcp.yml --profile gatling run --rm gatling
+git clone <repo-url> && cd poc-xa-transaction
+chmod +x scripts/setup-gatling-vm.sh
+./scripts/setup-gatling-vm.sh
+source ~/.bashrc
 ```
+
+Run the load test targeting VM 1's internal IP:
+
+```bash
+mvn gatling:test -f load-tests/pom.xml \
+  -Dgatling.baseUrl=http://<APP-VM-INTERNAL-IP>:8080 \
+  -Dgatling.peakRps=1000 \
+  -Dgatling.rampSeconds=60 \
+  -Dgatling.sustainSeconds=300
+```
+
+HTML report is written to `load-tests/target/gatling/*/index.html` on the Gatling VM.
 
 **Check results**:
 
-- HTML report appears at `./gatling-reports/*/index.html` on the VM disk
-- Grafana: `http://<vm-external-ip>:3000` (admin / admin) — open GCP firewall port 3000
-- Prometheus: `http://<vm-external-ip>:9090`
-
-To open Grafana without touching firewall rules, use an SSH tunnel:
+- Grafana: `http://<APP-VM-EXTERNAL-IP>:3000` (admin / admin) — requires GCP firewall port 3000 open, or use an SSH tunnel:
 
 ```bash
-ssh -L 3000:localhost:3000 -L 9090:localhost:9090 <user>@<vm-external-ip>
+ssh -L 3000:localhost:3000 -L 9090:localhost:9090 <user>@<app-vm-external-ip>
 # then open http://localhost:3000 locally
 ```
 

@@ -11,7 +11,7 @@ import static io.gatling.javaapi.http.HttpDsl.*;
 public class XaLoadSimulation extends Simulation {
 
     private static final String BASE_URL =
-            System.getProperty("gatling.baseUrl", "http://localhost:8080");
+            System.getProperty("gatling.baseUrl", "http://34.139.82.167:8080");
     private static final double PEAK_RPS =
             Double.parseDouble(System.getProperty("gatling.peakRps", "5000"));
     private static final int RAMP_SECONDS =
