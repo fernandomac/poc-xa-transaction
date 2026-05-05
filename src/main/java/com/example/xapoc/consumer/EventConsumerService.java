@@ -22,7 +22,7 @@ public class EventConsumerService {
 
     @JmsListener(destination = "sample.events", containerFactory = "jmsListenerContainerFactory")
     public void onMessage(String message) {
-        log.info("Consumer received message: {}", message);
+        log.debug("Consumer received message: {}", message);
         receivedMessages.add(message);
     }
 
