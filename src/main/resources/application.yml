@@ -26,16 +26,18 @@ spring:
   jta:
     enabled: true
     atomikos:
+      properties:
+        max-actives: 200
       datasource:
         unique-resource-name: mysqlXaDs
-        max-pool-size: 10
-        min-pool-size: 2
+        max-pool-size: 50
+        min-pool-size: 5
         borrow-connection-timeout: 30
         test-query: "SELECT 1"
       connectionfactory:
         unique-resource-name: artemisXaCf
-        max-pool-size: 10
-        min-pool-size: 2
+        max-pool-size: 50
+        min-pool-size: 5
         local-transaction-mode: false
 
 management:
