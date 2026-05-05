@@ -2,6 +2,8 @@ package com.example.xapoc.producer;
 
 import com.example.xapoc.domain.SampleEvent;
 import com.example.xapoc.repository.SampleEventRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,13 +27,20 @@ public class EventProducerService {
 
     private final SampleEventRepository repository;
     private final JmsTemplate jmsTemplate;
+    private final Timer xaTimer;
 
     @Value("${xa-poc.fault-injection.enabled:false}")
     private boolean faultInjectionEnabled;
 
-    public EventProducerService(SampleEventRepository repository, JmsTemplate jmsTemplate) {
+    public EventProducerService(SampleEventRepository repository,
+                                JmsTemplate jmsTemplate,
+                                MeterRegistry meterRegistry) {
         this.repository = repository;
         this.jmsTemplate = jmsTemplate;
+        this.xaTimer = Timer.builder("xa.transaction.duration")
+                .description("XA transaction duration (DB write + JMS send + 2PC)")
+                .publishPercentileHistogram()
+                .register(meterRegistry);
     }
 
     /**
@@ -43,21 +52,23 @@ public class EventProducerService {
      */
     @Transactional
     public SampleEvent produceEvent(String payload) {
-        SampleEvent event = new SampleEvent();
-        event.setPayload(payload);
-        repository.save(event);
-        log.info("Saved SampleEvent id={} payload={}", event.getId(), payload);
+        return xaTimer.record(() -> {
+            SampleEvent event = new SampleEvent();
+            event.setPayload(payload);
+            repository.save(event);
+            log.info("Saved SampleEvent id={} payload={}", event.getId(), payload);
 
-        String body = String.format("{\"eventId\":\"%s\",\"payload\":\"%s\"}",
-                event.getId(), payload);
-        jmsTemplate.send(QUEUE, session -> session.createTextMessage(body));
-        log.info("Sent JMS message to queue={} body={}", QUEUE, body);
+            String body = String.format("{\"eventId\":\"%s\",\"payload\":\"%s\"}",
+                    event.getId(), payload);
+            jmsTemplate.send(QUEUE, session -> session.createTextMessage(body));
+            log.info("Sent JMS message to queue={} body={}", QUEUE, body);
 
-        if (faultInjectionEnabled) {
-            log.warn("Fault injection active — throwing RuntimeException before XA commit");
-            throw new RuntimeException("Simulated fault — XA rollback triggered");
-        }
+            if (faultInjectionEnabled) {
+                log.warn("Fault injection active — throwing RuntimeException before XA commit");
+                throw new RuntimeException("Simulated fault — XA rollback triggered");
+            }
 
-        return event;
+            return event;
+        });
     }
 }
