@@ -37,6 +37,9 @@ public class JmsConfig {
     @Value("${spring.jta.atomikos.connectionfactory.max-pool-size:10}")
     private int maxPoolSize;
 
+    @Value("${spring.jta.atomikos.connectionfactory.min-pool-size:0}")
+    private int minPoolSize;
+
     @Value("${spring.jta.atomikos.connectionfactory.borrow-connection-timeout:30}")
     private int borrowConnectionTimeout;
 
@@ -49,7 +52,7 @@ public class JmsConfig {
         cf.setUniqueResourceName(uniqueResourceName);
         cf.setXaConnectionFactory(artemisXACf);
         cf.setMaxPoolSize(maxPoolSize);
-        cf.setMinPoolSize(0);
+        cf.setMinPoolSize(minPoolSize);
         cf.setBorrowConnectionTimeout(borrowConnectionTimeout);
         cf.setLocalTransactionMode(false);
         return cf;

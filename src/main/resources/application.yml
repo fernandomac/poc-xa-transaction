@@ -38,12 +38,13 @@ spring:
         unique-resource-name: mysqlXaDs
         max-pool-size: 200
         min-pool-size: 10
-        borrow-connection-timeout: 30
+        borrow-connection-timeout: 5
         test-query: "SELECT 1"
       connectionfactory:
         unique-resource-name: artemisXaCf
         max-pool-size: 200
         min-pool-size: 10
+        borrow-connection-timeout: 5
         local-transaction-mode: false
 
 management:
