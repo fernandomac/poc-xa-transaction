@@ -6,7 +6,7 @@ services:
     command: >
       --max_connections=1000
       --innodb-flush-log-at-trx-commit=2
-      --sync-binlog=0
+      --disable-log-bin
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: xapoc
@@ -60,6 +60,8 @@ services:
     restart: on-failure
     ports:
       - "8080:8080"
+    volumes:
+      - atomikos_log:/app/atomikos-logs
     environment:
       SPRING_DATASOURCE_URL: "jdbc:mysql://mysql:3306/xapoc?allowXAStatements=true&pinGlobalTxToPhysicalConnection=true&useSSL=false&allowPublicKeyRetrieval=true"
       SPRING_DATASOURCE_USERNAME: xapoc
@@ -159,3 +161,7 @@ volumes:
   prometheus_data:
   grafana_data:
   maven_cache:
+  atomikos_log:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
