@@ -4,10 +4,14 @@
 server:
   tomcat:
     threads:
-      max: 500
-    accept-count: 500
+      max: 200
+    accept-count: 200
 
 spring:
+  threads:
+    virtual:
+      enabled: true
+
   datasource:
     # URL includes XA-required parameters for MySQL Connector/J
     url: jdbc:mysql://localhost:3306/xapoc?allowXAStatements=true&pinGlobalTxToPhysicalConnection=true&useSSL=false&allowPublicKeyRetrieval=true
