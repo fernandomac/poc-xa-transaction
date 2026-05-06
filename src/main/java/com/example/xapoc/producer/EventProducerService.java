@@ -11,6 +11,8 @@ import org.springframework.jms.core.JmsTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.concurrent.Semaphore;
+
 /**
  * XA-transactional event producer.
  *
@@ -28,19 +30,30 @@ public class EventProducerService {
     private final SampleEventRepository repository;
     private final JmsTemplate jmsTemplate;
     private final Timer xaTimer;
+    private final Semaphore concurrencyLimiter;
 
     @Value("${xa-poc.fault-injection.enabled:false}")
     private boolean faultInjectionEnabled;
 
     public EventProducerService(SampleEventRepository repository,
                                 JmsTemplate jmsTemplate,
-                                MeterRegistry meterRegistry) {
+                                MeterRegistry meterRegistry,
+                                @Value("${xa-poc.max-concurrent-transactions:80}") int maxConcurrent) {
         this.repository = repository;
         this.jmsTemplate = jmsTemplate;
         this.xaTimer = Timer.builder("xa.transaction.duration")
                 .description("XA transaction duration (DB write + JMS send + 2PC)")
                 .publishPercentileHistogram()
                 .register(meterRegistry);
+        this.concurrencyLimiter = new Semaphore(maxConcurrent);
+    }
+
+    public boolean tryAcquire() {
+        return concurrencyLimiter.tryAcquire();
+    }
+
+    public void release() {
+        concurrencyLimiter.release();
     }
 
     /**

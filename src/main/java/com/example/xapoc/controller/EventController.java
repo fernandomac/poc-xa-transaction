@@ -17,10 +17,18 @@ public class EventController {
     }
 
     @PostMapping
-    public ResponseEntity<EventResponse> produce(@RequestBody EventRequest request) {
-        SampleEvent event = eventProducerService.produceEvent(request.payload());
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(new EventResponse(event.getId().toString(), event.getPayload()));
+    public ResponseEntity<?> produce(@RequestBody EventRequest request) {
+        if (!eventProducerService.tryAcquire()) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body("XA transaction capacity exceeded — try again later");
+        }
+        try {
+            SampleEvent event = eventProducerService.produceEvent(request.payload());
+            return ResponseEntity.status(HttpStatus.CREATED)
+                    .body(new EventResponse(event.getId().toString(), event.getPayload()));
+        } finally {
+            eventProducerService.release();
+        }
     }
 
     record EventRequest(String payload) {}

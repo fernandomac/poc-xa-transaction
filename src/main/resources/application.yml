@@ -40,14 +40,14 @@ spring:
         max-actives: 200
       datasource:
         unique-resource-name: mysqlXaDs
-        max-pool-size: 400
-        min-pool-size: 20
+        max-pool-size: 100
+        min-pool-size: 10
         borrow-connection-timeout: 5
         test-query: "SELECT 1"
       connectionfactory:
         unique-resource-name: artemisXaCf
-        max-pool-size: 400
-        min-pool-size: 20
+        max-pool-size: 100
+        min-pool-size: 10
         borrow-connection-timeout: 5
         local-transaction-mode: false
 
@@ -79,3 +79,7 @@ xa-poc:
   benchmark:
     # Number of events per benchmark run; overridden to 100 in application-test.yml
     event-count: 1000
+  # Admission control: max concurrent XA transactions in flight.
+  # Beyond this limit, POST /api/events returns 503 immediately.
+  # Rule of thumb: sustainable_rps × mean_latency_seconds (Little's Law).
+  max-concurrent-transactions: 80
