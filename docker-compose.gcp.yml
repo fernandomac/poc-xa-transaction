@@ -3,7 +3,10 @@ services:
     image: mysql:8.0
     platform: linux/amd64
     restart: unless-stopped
-    command: --max_connections=500
+    command: >
+      --max_connections=500
+      --innodb-flush-log-at-trx-commit=2
+      --sync-binlog=0
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: xapoc
