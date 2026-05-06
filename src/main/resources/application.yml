@@ -83,3 +83,7 @@ xa-poc:
   # Beyond this limit, POST /api/events returns 503 immediately.
   # Rule of thumb: sustainable_rps × mean_latency_seconds (Little's Law).
   max-concurrent-transactions: 80
+  consumer:
+    # Set to false during producer-focused load tests to avoid consumer XA overhead.
+    # Messages will accumulate in Artemis — safe for short test runs.
+    enabled: true

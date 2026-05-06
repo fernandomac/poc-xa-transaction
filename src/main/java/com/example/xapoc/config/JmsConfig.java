@@ -22,6 +22,9 @@ import jakarta.jms.Session;
 @EnableJms
 public class JmsConfig {
 
+    @Value("${xa-poc.consumer.enabled:true}")
+    private boolean consumerEnabled;
+
     @Value("${spring.artemis.broker-url}")
     private String brokerUrl;
 
@@ -74,6 +77,7 @@ public class JmsConfig {
         factory.setTransactionManager(transactionManager);
         factory.setSessionTransacted(true);
         factory.setSessionAcknowledgeMode(Session.SESSION_TRANSACTED);
+        factory.setAutoStartup(consumerEnabled);
         return factory;
     }
 }
