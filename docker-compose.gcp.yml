@@ -69,6 +69,9 @@ services:
       SPRING_ARTEMIS_BROKER_URL: tcp://artemis:61616
       SPRING_ARTEMIS_USER: admin
       SPRING_ARTEMIS_PASSWORD: admin
+      XA_POC_JMS_MODE: ${XA_POC_JMS_MODE:-xa}
+      XA_POC_CONSUMER_ENABLED: ${XA_POC_CONSUMER_ENABLED:-true}
+      XA_POC_MAX_CONCURRENT_TRANSACTIONS: ${XA_POC_MAX_CONCURRENT_TRANSACTIONS:-80}
     depends_on:
       mysql:
         condition: service_healthy
