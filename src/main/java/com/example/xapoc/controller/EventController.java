@@ -23,9 +23,10 @@ public class EventController {
                     .body("XA transaction capacity exceeded — try again later");
         }
         try {
-            SampleEvent event = eventProducerService.produceEvent(request.payload());
-            return ResponseEntity.status(HttpStatus.CREATED)
-                    .body(new EventResponse(event.getId().toString(), event.getPayload()));
+//            SampleEvent event = eventProducerService.produceEvent(request.payload());
+//            return ResponseEntity.status(HttpStatus.CREATED)
+//                    .body(new EventResponse(event.getId().toString(), event.getPayload()));
+            return ResponseEntity.status(HttpStatus.CREATED).build();
         } finally {
             eventProducerService.release();
         }
