@@ -4,7 +4,10 @@ import com.example.xapoc.domain.SampleEvent;
 import com.example.xapoc.producer.EventProducerService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/events")
@@ -23,10 +26,9 @@ public class EventController {
                     .body("XA transaction capacity exceeded — try again later");
         }
         try {
-//            SampleEvent event = eventProducerService.produceEvent(request.payload());
-//            return ResponseEntity.status(HttpStatus.CREATED)
-//                    .body(new EventResponse(event.getId().toString(), event.getPayload()));
-            return ResponseEntity.status(HttpStatus.CREATED).build();
+            SampleEvent event = eventProducerService.produceEvent(request.payload());
+            return ResponseEntity.status(HttpStatus.CREATED)
+                    .body(new EventResponse(event.getId().toString(), event.getPayload()));
         } finally {
             eventProducerService.release();
         }

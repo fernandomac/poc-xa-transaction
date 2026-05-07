@@ -71,10 +71,10 @@ public class EventProducerService {
             repository.save(event);
             log.debug("Saved SampleEvent id={} payload={}", event.getId(), payload);
 
-            String body = String.format("{\"eventId\":\"%s\",\"payload\":\"%s\"}",
-                    event.getId(), payload);
-            jmsTemplate.send(QUEUE, session -> session.createTextMessage(body));
-            log.debug("Sent JMS message to queue={} body={}", QUEUE, body);
+//            String body = String.format("{\"eventId\":\"%s\",\"payload\":\"%s\"}",
+//                    event.getId(), payload);
+//            jmsTemplate.send(QUEUE, session -> session.createTextMessage(body));
+//            log.debug("Sent JMS message to queue={} body={}", QUEUE, body);
 
             if (faultInjectionEnabled) {
                 log.warn("Fault injection active — throwing RuntimeException before XA commit");
