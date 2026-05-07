@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jms.core.JmsTemplate;
 import org.springframework.stereotype.Service;
@@ -27,8 +28,13 @@ public class EventProducerService {
     private static final Logger log = LoggerFactory.getLogger(EventProducerService.class);
     private static final String QUEUE = "sample.events";
 
+    // xa | non-transactional | disabled
+    enum JmsMode { xa, non_transactional, disabled }
+
     private final SampleEventRepository repository;
-    private final JmsTemplate jmsTemplate;
+    private final JmsTemplate xaJmsTemplate;
+    private final JmsTemplate nonXaJmsTemplate;
+    private final JmsMode jmsMode;
     private final Timer xaTimer;
     private final Semaphore concurrencyLimiter;
 
@@ -36,16 +42,21 @@ public class EventProducerService {
     private boolean faultInjectionEnabled;
 
     public EventProducerService(SampleEventRepository repository,
-                                JmsTemplate jmsTemplate,
+                                JmsTemplate xaJmsTemplate,
+                                @Qualifier("nonXa") JmsTemplate nonXaJmsTemplate,
                                 MeterRegistry meterRegistry,
-                                @Value("${xa-poc.max-concurrent-transactions:80}") int maxConcurrent) {
+                                @Value("${xa-poc.max-concurrent-transactions:80}") int maxConcurrent,
+                                @Value("${xa-poc.jms.mode:xa}") String jmsMode) {
         this.repository = repository;
-        this.jmsTemplate = jmsTemplate;
+        this.xaJmsTemplate = xaJmsTemplate;
+        this.nonXaJmsTemplate = nonXaJmsTemplate;
+        this.jmsMode = JmsMode.valueOf(jmsMode.replace('-', '_'));
         this.xaTimer = Timer.builder("xa.transaction.duration")
                 .description("XA transaction duration (DB write + JMS send + 2PC)")
                 .publishPercentileHistogram()
                 .register(meterRegistry);
         this.concurrencyLimiter = new Semaphore(maxConcurrent);
+        log.info("JMS mode: {}", this.jmsMode);
     }
 
     public boolean tryAcquire() {
@@ -71,10 +82,11 @@ public class EventProducerService {
             repository.save(event);
             log.debug("Saved SampleEvent id={} payload={}", event.getId(), payload);
 
-//            String body = String.format("{\"eventId\":\"%s\",\"payload\":\"%s\"}",
-//                    event.getId(), payload);
-//            jmsTemplate.send(QUEUE, session -> session.createTextMessage(body));
-//            log.debug("Sent JMS message to queue={} body={}", QUEUE, body);
+            if (jmsMode == JmsMode.xa) {
+                String body = buildBody(event);
+                xaJmsTemplate.send(QUEUE, session -> session.createTextMessage(body));
+                log.debug("Sent XA JMS message to queue={}", QUEUE);
+            }
 
             if (faultInjectionEnabled) {
                 log.warn("Fault injection active — throwing RuntimeException before XA commit");
@@ -83,5 +95,18 @@ public class EventProducerService {
 
             return event;
         });
+    }
+
+    // Called after @Transactional commits — non-XA send is outside 2PC scope
+    public void sendNonXa(SampleEvent event) {
+        if (jmsMode == JmsMode.non_transactional) {
+            String body = buildBody(event);
+            nonXaJmsTemplate.send(QUEUE, session -> session.createTextMessage(body));
+            log.debug("Sent non-XA JMS message to queue={}", QUEUE);
+        }
+    }
+
+    private String buildBody(SampleEvent event) {
+        return String.format("{\"eventId\":\"%s\",\"payload\":\"%s\"}", event.getId(), event.getPayload());
     }
 }

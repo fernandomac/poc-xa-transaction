@@ -87,3 +87,8 @@ xa-poc:
     # Set to false during producer-focused load tests to avoid consumer XA overhead.
     # Messages will accumulate in Artemis — safe for short test runs.
     enabled: true
+  jms:
+    # xa              — JMS send inside XA transaction (full 2PC, default)
+    # non-transactional — JMS send after DB commit using plain connection (measures 2PC cost)
+    # disabled        — no JMS send (DB-only baseline)
+    mode: xa

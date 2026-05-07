@@ -1,12 +1,15 @@
 package com.example.xapoc.config;
 
 import com.atomikos.jms.AtomikosConnectionFactoryBean;
+import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 import org.apache.activemq.artemis.jms.client.ActiveMQXAConnectionFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jms.annotation.EnableJms;
 import org.springframework.jms.config.DefaultJmsListenerContainerFactory;
+import org.springframework.jms.connection.CachingConnectionFactory;
 import org.springframework.jms.core.JmsTemplate;
 import org.springframework.transaction.jta.JtaTransactionManager;
 
@@ -65,6 +68,17 @@ public class JmsConfig {
     public JmsTemplate jmsTemplate(ConnectionFactory connectionFactory) {
         JmsTemplate template = new JmsTemplate(connectionFactory);
         template.setSessionTransacted(true);
+        return template;
+    }
+
+    @Bean
+    @Qualifier("nonXa")
+    public JmsTemplate nonXaJmsTemplate() {
+        ActiveMQConnectionFactory cf = new ActiveMQConnectionFactory(brokerUrl, user, password);
+        CachingConnectionFactory cached = new CachingConnectionFactory(cf);
+        cached.setSessionCacheSize(50);
+        JmsTemplate template = new JmsTemplate(cached);
+        template.setSessionTransacted(false);
         return template;
     }
 

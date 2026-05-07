@@ -27,6 +27,7 @@ public class EventController {
         }
         try {
             SampleEvent event = eventProducerService.produceEvent(request.payload());
+            eventProducerService.sendNonXa(event); // no-op unless jms.mode=non-transactional
             return ResponseEntity.status(HttpStatus.CREATED)
                     .body(new EventResponse(event.getId().toString(), event.getPayload()));
         } finally {
