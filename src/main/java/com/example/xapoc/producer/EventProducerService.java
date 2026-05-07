@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jms.core.JmsTemplate;
@@ -56,7 +57,21 @@ public class EventProducerService {
                 .publishPercentileHistogram()
                 .register(meterRegistry);
         this.concurrencyLimiter = new Semaphore(maxConcurrent);
-        log.info("JMS mode: {}", this.jmsMode);
+    }
+
+    @PostConstruct
+    void logStartupConfig() {
+        log.info("┌─────────────────────────────────────────────────┐");
+        log.info("│              XA POC — Active Configuration       │");
+        log.info("├─────────────────────────────────────────────────┤");
+        log.info("│  JMS mode              : {}", pad(jmsMode.name(), 28) + "│");
+        log.info("│  Fault injection       : {}", pad(String.valueOf(faultInjectionEnabled), 28) + "│");
+        log.info("│  Max concurrent XA     : {}", pad(String.valueOf(concurrencyLimiter.availablePermits()), 28) + "│");
+        log.info("└─────────────────────────────────────────────────┘");
+    }
+
+    private static String pad(String value, int width) {
+        return String.format("%-" + width + "s", value);
     }
 
     public boolean tryAcquire() {
