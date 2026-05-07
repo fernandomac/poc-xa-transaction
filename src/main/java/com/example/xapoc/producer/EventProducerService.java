@@ -68,12 +68,12 @@ public class EventProducerService {
         return xaTimer.record(() -> {
             SampleEvent event = new SampleEvent();
             event.setPayload(payload);
-            repository.save(event);
+//            repository.save(event);
             log.debug("Saved SampleEvent id={} payload={}", event.getId(), payload);
 
             String body = String.format("{\"eventId\":\"%s\",\"payload\":\"%s\"}",
                     event.getId(), payload);
-            jmsTemplate.send(QUEUE, session -> session.createTextMessage(body));
+//            jmsTemplate.send(QUEUE, session -> session.createTextMessage(body));
             log.debug("Sent JMS message to queue={} body={}", QUEUE, body);
 
             if (faultInjectionEnabled) {
