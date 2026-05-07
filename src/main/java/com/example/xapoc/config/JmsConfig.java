@@ -4,10 +4,10 @@ import com.atomikos.jms.AtomikosConnectionFactoryBean;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 import org.apache.activemq.artemis.jms.client.ActiveMQXAConnectionFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.context.annotation.Primary;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.jms.annotation.EnableJms;
 import org.springframework.jms.config.DefaultJmsListenerContainerFactory;
 import org.springframework.jms.connection.CachingConnectionFactory;
@@ -26,8 +26,11 @@ import jakarta.jms.Session;
 @EnableJms
 public class JmsConfig {
 
-    @Value("${xa-poc.consumer.enabled:true}")
-    private boolean consumerEnabled;
+    private final boolean consumerEnabled;
+
+    public JmsConfig(XaPocProperties props) {
+        this.consumerEnabled = props.getConsumer().isEnabled();
+    }
 
     @Value("${spring.artemis.broker-url}")
     private String brokerUrl;

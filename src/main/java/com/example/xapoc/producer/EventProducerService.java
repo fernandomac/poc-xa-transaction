@@ -1,5 +1,6 @@
 package com.example.xapoc.producer;
 
+import com.example.xapoc.config.XaPocProperties;
 import com.example.xapoc.domain.SampleEvent;
 import com.example.xapoc.repository.SampleEventRepository;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -8,7 +9,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jms.core.JmsTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,27 +36,25 @@ public class EventProducerService {
     private final JmsTemplate xaJmsTemplate;
     private final JmsTemplate nonXaJmsTemplate;
     private final JmsMode jmsMode;
+    private final boolean faultInjectionEnabled;
     private final Timer xaTimer;
     private final Semaphore concurrencyLimiter;
-
-    @Value("${xa-poc.fault-injection.enabled:false}")
-    private boolean faultInjectionEnabled;
 
     public EventProducerService(SampleEventRepository repository,
                                 JmsTemplate xaJmsTemplate,
                                 @Qualifier("nonXa") JmsTemplate nonXaJmsTemplate,
                                 MeterRegistry meterRegistry,
-                                @Value("${xa-poc.max-concurrent-transactions:80}") int maxConcurrent,
-                                @Value("${xa-poc.jms.mode:xa}") String jmsMode) {
+                                XaPocProperties props) {
         this.repository = repository;
         this.xaJmsTemplate = xaJmsTemplate;
         this.nonXaJmsTemplate = nonXaJmsTemplate;
-        this.jmsMode = JmsMode.valueOf(jmsMode.replace('-', '_'));
+        this.jmsMode = JmsMode.valueOf(props.getJms().getMode().replace('-', '_'));
+        this.faultInjectionEnabled = props.getFaultInjection().isEnabled();
         this.xaTimer = Timer.builder("xa.transaction.duration")
                 .description("XA transaction duration (DB write + JMS send + 2PC)")
                 .publishPercentileHistogram()
                 .register(meterRegistry);
-        this.concurrencyLimiter = new Semaphore(maxConcurrent);
+        this.concurrencyLimiter = new Semaphore(props.getMaxConcurrentTransactions());
     }
 
     @PostConstruct
