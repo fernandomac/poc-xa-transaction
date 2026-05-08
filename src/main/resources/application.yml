@@ -91,4 +91,4 @@ xa-poc:
     # xa              — JMS send inside XA transaction (full 2PC, default)
     # non-transactional — JMS send after DB commit using plain connection (measures 2PC cost)
     # disabled        — no JMS send (DB-only baseline)
-    mode: non-transactional
+    mode: xa
